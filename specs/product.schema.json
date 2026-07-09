@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "logos-iris-product-schema",
+  "title": "Logos Iris — Product Schema",
+  "description": "Fase 2 (/logos). Deriva de docs/PRD.md. Multi-tenant via tenant_id + RLS em toda tabela tenant-scoped. Toda tabela: created_at, updated_at, deleted_at (soft delete onde aplicável).",
+  "entities": {
+    "tenants": {
+      "description": "Empresa cliente. Cardinalidade 1:1 com número WhatsApp (decisão travada — multi-número fica pra quando houver cliente real com essa necessidade).",
+      "fields": {
+        "id": "uuid, pk",
+        "nome_empresa": "text, not null",
+        "plano_id": "uuid, fk -> plans.id, not null",
+        "status": "enum(ativo, pausado, cancelado), not null, default ativo",
+        "whatsapp_provider": "enum(evolution, openwa, cloud_api), not null",
+        "whatsapp_number": "text, unique, not null",
+        "whatsapp_connection_status": "enum(conectado, desconectado, pareando), not null",
+        "personas_ativas": "text[] subset of (atendimento, vendas, agendamento, sdr), not null",
+        "roteador_invisivel_ativo": "boolean, not null, default false",
+        "created_at": "timestamptz, not null",
+        "updated_at": "timestamptz, not null",
+        "deleted_at": "timestamptz, nullable"
+      },
+      "rls": "SELECT/UPDATE restrito a tenant_id = auth.tenant_id() (painel cliente); painel admin usa checagem hardcoded de admin (service layer), não RLS role."
+    },
+    "contacts": {
+      "description": "Cliente final de um tenant.",
+      "fields": {
+        "id": "uuid, pk",
+        "tenant_id": "uuid, fk -> tenants.id, not null",
+        "telefone": "text, not null",
+        "nome": "text, nullable",
+        "created_at": "timestamptz, not null",
+        "updated_at": "timestamptz, not null",
+        "deleted_at": "timestamptz, nullable, comment: apagar contato apaga memória + embeddings associados (LGPD, fluxo de esquecimento)"
+      },
+      "constraints": ["unique(tenant_id, telefone)"],
+      "rls": "tenant_id = auth.tenant_id()"
+    },
+    "conversations": {
+      "description": "Fila serializada por conversa (não global). Idempotência por message id no processamento, não no schema desta entidade.",
+      "fields": {
+        "id": "uuid, pk",
+        "tenant_id": "uuid, fk -> tenants.id, not null",
+        "contact_id": "uuid, fk -> contacts.id, not null",
+        "persona_ativa": "enum(atendimento, vendas, agendamento, sdr), not null",
+        "status": "enum(ativa, pausada, encerrada), not null, default ativa",
+        "pausada_ate": "timestamptz, nullable",
+        "created_at": "timestamptz, not null",
+        "updated_at": "timestamptz, not null"
+      },
+      "rls": "tenant_id = auth.tenant_id()"
+    },
+    "handoff_events": {
+      "description": "Log de gatilhos de handoff — HumanHandoff (módulo ★).",
+      "fields": {
+        "id": "uuid, pk",
+        "conversation_id": "uuid, fk -> conversations.id, not null",
+        "gatilho": "enum(botao_painel, from_me_detectado, comando_chat, pedido_cliente, baixa_confianca), not null",
+        "acionado_em": "timestamptz, not null",
+        "resolvido_em": "timestamptz, nullable",
+        "retomada_confirmada": "boolean, not null, default false, comment: retomada após pausa longa nunca é silenciosa"
+      },
+      "rls": "via join conversation.tenant_id = auth.tenant_id()"
+    },
+    "appointments": {
+      "description": "Agendamento — tool 'propor horário' da ConversationEngine (módulo 5), consumida pela persona Concierge (Stories 9-11). Fonte da métrica de redução de no-show.",
+      "fields": {
+        "id": "uuid, pk",
+        "tenant_id": "uuid, fk -> tenants.id, not null",
+        "contact_id": "uuid, fk -> contacts.id, not null",
+        "conversation_id": "uuid, fk -> conversations.id, not null",
+        "horario": "timestamptz, not null",
+        "status": "enum(agendado, confirmado, remarcado, no_show, cancelado, concluido), not null, default agendado",
+        "confirmacao_enviada_em": "timestamptz, nullable, comment: confirmação automática na véspera",
+        "created_at": "timestamptz, not null",
+        "updated_at": "timestamptz, not null"
+      },
+      "rls": "tenant_id = auth.tenant_id()"
+    },
+    "follow_ups": {
+      "description": "Follow-up programado — tool 'criar follow-up' da ConversationEngine (módulo 5), Story 8. Contagem mensal confrontada contra plans.follow_ups_automaticos_mes (Feature Gating).",
+      "fields": {
+        "id": "uuid, pk",
+        "tenant_id": "uuid, fk -> tenants.id, not null",
+        "conversation_id": "uuid, fk -> conversations.id, not null",
+        "agendado_para": "timestamptz, not null, comment: retomada em 48h, uma vez, conforme decisão do brainstorm",
+        "status": "enum(pendente, enviado, cancelado), not null, default pendente",
+        "created_at": "timestamptz, not null"
+      },
+      "rls": "tenant_id = auth.tenant_id()"
+    },
+    "messages": {
+      "description": "Mensagem individual, já pós-debounce.",
+      "fields": {
+        "id": "uuid, pk",
+        "conversation_id": "uuid, fk -> conversations.id, not null",
+        "direcao": "enum(recebida, enviada), not null",
+        "conteudo": "text, not null",
+        "tipo_midia": "enum(texto, audio, imagem, documento), not null, default texto",
+        "from_me_detectado": "boolean, not null, default false",
+        "model_id": "uuid, fk -> model_registry.id, nullable, comment: nulo se mensagem do cliente ou humano",
+        "tokens_input": "integer, nullable",
+        "tokens_output": "integer, nullable",
+        "custo_usd": "numeric(10,6), nullable",
+        "latencia_ms": "integer, nullable",
+        "created_at": "timestamptz, not null"
+      },
+      "rls": "via join conversation.tenant_id = auth.tenant_id()"
+    },
+    "contact_memory_summaries": {
+      "description": "Memória longa — resumos periódicos, nunca transcrição integral (LGPD).",
+      "fields": {
+        "id": "uuid, pk",
+        "contact_id": "uuid, fk -> contacts.id, not null",
+        "tenant_id": "uuid, fk -> tenants.id, not null",
+        "resumo": "text, not null",
+        "periodo_inicio": "timestamptz, not null",
+        "periodo_fim": "timestamptz, not null",
+        "expira_em": "timestamptz, not null, comment: derivado de plans.retencao_memoria_dias",
+        "created_at": "timestamptz, not null"
+      },
+      "rls": "tenant_id = auth.tenant_id()"
+    },
+    "knowledge_base_entries": {
+      "description": "Enriquecimento do cliente — TenantKnowledgeBase. Versionamento separado da camada artesanal (decisão travada).",
+      "fields": {
+        "id": "uuid, pk",
+        "tenant_id": "uuid, fk -> tenants.id, not null",
+        "campo": "enum(catalogo, faq, politicas, horarios, saudacao, nome_agente, dados_negocio), not null",
+        "conteudo": "jsonb, not null, comment: estrutura por campo, nunca textarea livre",
+        "status": "enum(rascunho, publicado, historico), not null, default rascunho",
+        "versao": "integer, not null",
+        "contradicao_detectada": "boolean, not null, default false",
+        "created_at": "timestamptz, not null",
+        "publicado_em": "timestamptz, nullable"
+      },
+      "rls": "tenant_id = auth.tenant_id(); edição só pelo próprio tenant"
+    },
+    "artisanal_layer_versions": {
+      "description": "Camada artesanal — entidade própria (decisão travada), separada de knowledge_base_entries. Editável só via painel admin.",
+      "fields": {
+        "id": "uuid, pk",
+        "tenant_id": "uuid, fk -> tenants.id, not null",
+        "conteudo": "text, not null",
+        "status": "enum(rascunho, publicado, historico), not null, default rascunho",
+        "versao": "integer, not null",
+        "created_at": "timestamptz, not null",
+        "publicado_em": "timestamptz, nullable"
+      },
+      "rls": "SELECT (versão simplificada) para tenant_id = auth.tenant_id(); INSERT/UPDATE só admin (checagem hardcoded no service layer, não RLS de tenant)."
+    },
+    "model_registry": {
+      "description": "ModelGateway (módulo ★) — administrável só pelo painel admin.",
+      "fields": {
+        "id": "uuid, pk",
+        "provider": "enum(glm, kimi, deepseek, minimax, nvidia_nim, claude, gpt4o, groq), not null",
+        "model_name": "text, not null",
+        "task_type": "enum(triagem, conversa_principal, extracao_documento, embeddings), not null",
+        "tier": "enum(basico, premium), not null",
+        "prioridade_fallback": "integer, not null, comment: ordem dentro da cadeia de fallback por task_type",
+        "ativo": "boolean, not null, default true",
+        "custo_por_1k_tokens_input": "numeric(10,6), not null",
+        "custo_por_1k_tokens_output": "numeric(10,6), not null",
+        "created_at": "timestamptz, not null",
+        "updated_at": "timestamptz, not null"
+      },
+      "rls": "admin-only (hardcoded), sem tenant_id — entidade global"
+    },
+    "plans": {
+      "description": "Feature Gating por plano (módulo 10). Checagem roda no backend, painel cliente só reflete.",
+      "fields": {
+        "id": "uuid, pk",
+        "nome": "text, not null",
+        "max_personas_ativas": "integer, not null",
+        "roteador_invisivel_incluso": "boolean, not null",
+        "tier_modelo": "enum(basico, premium), not null",
+        "limite_mensagens_mes": "integer, not null",
+        "retencao_memoria_dias": "integer, not null, default 90",
+        "follow_ups_automaticos_mes": "integer, not null",
+        "auditoria_qualidade_incluida": "boolean, not null, default false",
+        "seats_painel": "integer, not null, default 1",
+        "api_oficial_meta_addon_disponivel": "boolean, not null",
+        "voz_clonada_addon_disponivel": "boolean, not null",
+        "created_at": "timestamptz, not null",
+        "updated_at": "timestamptz, not null"
+      },
+      "note": "Valores/preços fora de escopo deste PRD — depende de CostObservability rodando no piloto. Estrutura travada, números pendentes.",
+      "rls": "SELECT liberado a qualquer tenant autenticado (precisa ler o próprio plano e comparar upgrade); INSERT/UPDATE admin-only (hardcoded), sem tenant_id — entidade global."
+    },
+    "model_usage_log": {
+      "description": "CostObservability (módulo 11) — tokens/custo por conversa/tenant/modelo desde o dia 1.",
+      "fields": {
+        "id": "uuid, pk",
+        "tenant_id": "uuid, fk -> tenants.id, not null",
+        "conversation_id": "uuid, fk -> conversations.id, not null",
+        "model_id": "uuid, fk -> model_registry.id, not null",
+        "tokens_input": "integer, not null",
+        "tokens_output": "integer, not null",
+        "custo_usd": "numeric(10,6), not null",
+        "latencia_ms": "integer, not null",
+        "escalonou_para_humano": "boolean, not null, default false",
+        "created_at": "timestamptz, not null"
+      },
+      "rls": "tenant_id = auth.tenant_id() para leitura do próprio tenant; admin lê todos"
+    }
+  },
+  "cross_cutting": {
+    "multi_tenancy": "tenant_id em toda tabela tenant-scoped, RLS ativo. Painel admin acessa via checagem hardcoded (não role de tenant) — sem tabela de roles neste PRD (decisão travada).",
+    "soft_delete": "deleted_at em tenants e contacts; demais tabelas são log/histórico, não fazem sentido soft-delete.",
+    "lgpd": "contacts.deleted_at dispara apagamento de contact_memory_summaries + embeddings associados. Dados pessoais (telefone, nome) criptografados em repouso (pgcrypto, regra global Logos Tech)."
+  }
+}
