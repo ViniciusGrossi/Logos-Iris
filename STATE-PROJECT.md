@@ -69,15 +69,15 @@ tags: [status, roadmap]
 ## Workers Ativos
 > Preenchido por /logos ao spawnar agents (máx 2 simultâneos). Limpo ao concluir.
 
-(nenhum)
+(nenhum — dba concluiu execução 2026-07-15 23:50, ver Bloqueios pro motivo do STATUS ❌)
 
 ## Sync Requests Pendentes
 > Spec Sync Requests acumulados na wave atual. Apresentados em batch.
 
-(nenhum)
+- Dashboard Supabase: adicionar schema `iris` em Settings → API → Exposed Schemas (ação manual fora do write-scope do worker dba, necessária antes de `supabase-js .schema('iris')` funcionar em Fase 7+)
 
 ## Bloqueios
-(nenhum)
+- [2026-07-15] Fase 6 não fecha: stop condition (migrations aplicadas + pgTAP verde + advisors limpos) não alcançado. dba escreveu 13 migrations + seed.sql + 3 arquivos pgTAP (32 assertions: RLS ×14, constraints ×10, soft-delete ×8), todos autochecklistados pass contra ARCHITECTURE.md e os 3 gaps do review inline — mas nunca executados contra banco real: servidor MCP Supabase desconectado nesta sessão (ToolSearch confirma zero tools `mcp__claude_ai_Supabase__*`), sem Docker/psql local, sem `.env`/credenciais no diretório do projeto. Caminhos de desbloqueio (escolha do Vinicius): (a) reconectar MCP Supabase nesta sessão, ou (b) fornecer `SUPABASE_ACCESS_TOKEN` + senha do banco (projeto `nqubjiosnlaatxxamiut`) pro worker usar Supabase CLI (`supabase link` + `db push`, confirmado funcional v2.109.1) como fallback.
 
 ## Lições
 > Claude registra aqui após cada correção do usuário neste projeto.
@@ -88,4 +88,5 @@ tags: [status, roadmap]
 - [2026-07-08] Playbook fase-02-prd.md prescreve `/gsd-discuss-phase` e `/gsd-spec-phase` como se fossem genéricos sobre docs/PRD.md — mas GSD real exige phase numérica + PROJECT.md/ROADMAP.md/STATE.md próprios (state machine paralela ao /logos, incompatível). Projeto só tem STATE-PROJECT.md do /logos. Desviei: rodei "discuss" e "spec" manualmente, sem a máquina GSD. Mesma classe de skill-bug do to-prd — corrigir nos dois playbooks fora deste projeto.
 - [2026-07-11] Playbook fase-05-decomposition.md prescreve `/to-issue` e `/gsd-plan-phase` — mesma classe de skill-bug já registrada em fase-01/02: `to-issues` real publica em issue tracker (GitHub etc, inexistente aqui) e `gsd-plan-phase` exige máquina paralela (PROJECT.md/ROADMAP.md/STATE.md) incompatível com STATE-PROJECT.md do /logos. Desviei: tracer bullets + waves feitos manualmente, direto em docs/tasks.md. 3 playbooks (01, 02, 05) já pisaram nisso — considerar reescrever esses passos como "decompor manualmente em tracer bullets" em vez de invocar skill externa.
 - [2026-07-11] O Skill tool resolveu `/logos` para o path user-global (`~/.claude/skills/logos`, v7 — cita `logos-cli/cli.py`, morto) mesmo com regra travada abaixo mandando v8 project-scoped. Invocação por nome sem prefixo de diretório não prioriza skill de projeto. Contorno: ignorei o output do v7 e segui a validação manual contra `.claude/skills/logos/` (v8) na raiz do repo. Regra pra próxima sessão: se possível invocar via prefixo de diretório; senão, sempre conferir se o SKILL.md carregado bate com o path v8 antes de agir sobre o conteúdo.
+- [2026-07-15] Não existe projeto Supabase dedicado ao Logos Iris — instância compartilhada (`nqubjiosnlaatxxamiut`, "Teste de projetos") com 1 schema Postgres por produto (`delphi`, `logos_platform`, `logos_polis`, `concurso`, `padaria`, `paideia`, `Mens-Sana`, `Logus_Tech_Oficinas`). dba decidiu seguir o padrão: schema `iris` (tabelas) + `iris_private` (funções pgcrypto/SECURITY DEFINER) em vez do `private` genérico do ARCHITECTURE.md — evita colisão de nome entre produtos na mesma instância. Repassar essa convenção pro worker quando respawnar.
 - [2026-07-08] RESOLVIDO: gate f2 `validate` apontava pra `logos-cli/logos/cli.py` (removido, __pycache__ vazio) — Vinicius consertou migrando pro `/logos` v8 self-contido: skill v8 vive em `.claude/skills/logos/` (raiz do repo, project-scoped) com `scripts/validate.py` stdlib-only, gate referencia `[SKILL_ROOT]/scripts/validate.py`. `~/.claude/skills/logos/` (user-global) continua v7, desatualizada. Regra do Vinicius: **sempre usar o v8** — daqui pra frente, ler playbooks/gates a partir de `C:\Users\everex\Documents\Logos Tech\.claude\skills\logos\`, não do path user-global.
