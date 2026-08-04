@@ -12,14 +12,15 @@ select has_column('iris', 'tenants', 'deleted_at', 'iris.tenants tem coluna dele
 select has_column('iris', 'contacts', 'deleted_at', 'iris.contacts tem coluna deleted_at (soft delete)');
 
 -- 3. soft-delete de um tenant (novo, descartável) não remove a linha fisicamente
-insert into iris.tenants (nome_empresa, plano_id, whatsapp_provider, whatsapp_number)
-values ('Tenant Soft Delete', '00000000-0000-0000-0000-000000000101', 'evolution', '+5511900000699')
-returning id as tenant_sd \gset
+-- ponytail: \gset é meta-comando client-side do psql, não interpretado via MCP execute_sql —
+-- id fixo literal substitui RETURNING ... \gset (mesmo padrão de 02_constraints.sql teste #10).
+insert into iris.tenants (id, nome_empresa, plano_id, whatsapp_provider, whatsapp_number)
+values ('00000000-0000-0000-0000-0000000ff002', 'Tenant Soft Delete', '00000000-0000-0000-0000-000000000101', 'evolution', '+5511900000699');
 
-update iris.tenants set deleted_at = now() where id = :'tenant_sd';
+update iris.tenants set deleted_at = now() where id = '00000000-0000-0000-0000-0000000ff002';
 
 select is(
-  (select count(*)::int from iris.tenants where id = :'tenant_sd'),
+  (select count(*)::int from iris.tenants where id = '00000000-0000-0000-0000-0000000ff002'),
   1,
   'soft delete de tenant (UPDATE deleted_at) não remove a linha fisicamente'
 );

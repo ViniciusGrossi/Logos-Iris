@@ -51,65 +51,86 @@ select is(
   'tenant A não enxerga contact_id do tenant B mesmo filtrando direto'
 );
 
+-- ponytail: iris_private.phone_hash/encrypt_pii são REVOKE'd de authenticated e GRANT'd só a
+-- service_role (0001_extensions_pgcrypto_vault.sql — PII só cifra no backend, nunca client-side).
+-- Testes 5-8 rodam como role authenticated (linha 18), então usam bytea literal no lugar da
+-- chamada real — o que está sob teste aqui é RLS por tenant_id, não a criptografia em si.
+
 -- 5. contacts INSERT: tenant A insere contact para o próprio tenant (RLS with check ok)
 select lives_ok(
   format($$insert into iris.contacts (tenant_id, telefone_hash, telefone_enc, nome_enc)
-           values (%L, iris_private.phone_hash('+5511900000001'), iris_private.encrypt_pii('+5511900000001'), iris_private.encrypt_pii('Teste RLS'))$$, :tenant_a),
+           values (%L, '\x0001'::bytea, '\x0002'::bytea, '\x0003'::bytea)$$, :tenant_a),
   'tenant A consegue INSERT de contact com o próprio tenant_id'
 );
+
+-- ponytail: extensions.throws_ok(sql, code, desc) de 3 args despacha, quando octet_length(code)=5
+-- (todo SQLSTATE tem 5 bytes), para throws_ok(sql, code, $3 AS MENSAGEM esperada, NULL AS desc) —
+-- ou seja, o 3º argumento vira "mensagem exata esperada", não descrição do teste. Testes 6, 12, 13
+-- usam a forma de 4 args (sql, code, null, description) pra comparar só o SQLSTATE.
 
 -- 6. contacts INSERT: tenant A tenta inserir contact "fingindo" ser do tenant B → bloqueado
 select throws_ok(
   format($$insert into iris.contacts (tenant_id, telefone_hash, telefone_enc, nome_enc)
-           values (%L, iris_private.phone_hash('+5511900000002'), iris_private.encrypt_pii('+5511900000002'), iris_private.encrypt_pii('Teste RLS B'))$$, :tenant_b),
+           values (%L, '\x0004'::bytea, '\x0005'::bytea, '\x0006'::bytea)$$, :tenant_b),
   '42501',
+  null,
   'tenant A NÃO consegue INSERT de contact com tenant_id de B (RLS with check)'
 );
 
+-- ponytail: Postgres exige que WITH com statement que modifica dados fique no nível
+-- top-level da query — não pode ficar aninhado como subquery escalar dentro de select is(...)
+-- ("WITH clause containing a data-modifying statement must be at the top level"). Testes 7-11
+-- reescritos com o WITH no nível superior, só a leitura de `upd`/`del` vai dentro de is().
+
 -- 7. contacts UPDATE: tenant A atualiza o próprio contact (1 linha afetada)
+with upd as (
+  update iris.contacts set nome_enc = '\x0007'::bytea
+  where id = :contact_a1
+  returning 1
+)
 select is(
-  (with upd as (
-     update iris.contacts set nome_enc = iris_private.encrypt_pii('Camila Rocha Atualizada')
-     where id = :contact_a1
-     returning 1
-   ) select count(*)::int from upd),
+  (select count(*)::int from upd),
   1,
   'tenant A consegue UPDATE do próprio contact'
 );
 
 -- 8. contacts UPDATE: tenant A tenta atualizar contact de B → 0 linhas (RLS using filtra fora do escopo)
+with upd as (
+  update iris.contacts set nome_enc = '\x0008'::bytea where id = :contact_b1
+  returning 1
+)
 select is(
-  (with upd as (
-     update iris.contacts set nome_enc = iris_private.encrypt_pii('Hack') where id = :contact_b1
-     returning 1
-   ) select count(*)::int from upd),
+  (select count(*)::int from upd),
   0,
   'tenant A NÃO consegue UPDATE de contact do tenant B (0 linhas afetadas)'
 );
 
 -- 9. contacts DELETE: tenant A tenta apagar contact de B → 0 linhas
+with del as (
+  delete from iris.contacts where id = :contact_b1 returning 1
+)
 select is(
-  (with del as (
-     delete from iris.contacts where id = :contact_b1 returning 1
-   ) select count(*)::int from del),
+  (select count(*)::int from del),
   0,
   'tenant A NÃO consegue DELETE de contact do tenant B (0 linhas afetadas)'
 );
 
 -- 10. tenants UPDATE: tenant A atualiza o próprio tenant
+with upd as (
+  update iris.tenants set roteador_invisivel_ativo = true where id = :tenant_a returning 1
+)
 select is(
-  (with upd as (
-     update iris.tenants set roteador_invisivel_ativo = true where id = :tenant_a returning 1
-   ) select count(*)::int from upd),
+  (select count(*)::int from upd),
   1,
   'tenant A consegue UPDATE do próprio tenant'
 );
 
 -- 11. tenants UPDATE: tenant A tenta atualizar tenant B → 0 linhas
+with upd as (
+  update iris.tenants set status = 'cancelado' where id = :tenant_b returning 1
+)
 select is(
-  (with upd as (
-     update iris.tenants set status = 'cancelado' where id = :tenant_b returning 1
-   ) select count(*)::int from upd),
+  (select count(*)::int from upd),
   0,
   'tenant A NÃO consegue UPDATE do tenant B (0 linhas afetadas)'
 );
@@ -119,6 +140,7 @@ select throws_ok(
   $$insert into iris.tenants (nome_empresa, plano_id, whatsapp_provider, whatsapp_number)
     values ('Tenant Fantasma', '00000000-0000-0000-0000-000000000101', 'evolution', '+5511900000099')$$,
   '42501',
+  null,
   'authenticated NÃO consegue INSERT em iris.tenants (sem policy de insert, admin-only)'
 );
 
@@ -126,6 +148,7 @@ select throws_ok(
 select throws_ok(
   format($$select 1 from iris.whatsapp_connections where tenant_id = %L$$, :tenant_a),
   '42501',
+  null,
   'tenant A NÃO consegue SELECT em whatsapp_connections (ADR-018: service-role-only)'
 );
 
