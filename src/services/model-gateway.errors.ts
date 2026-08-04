@@ -38,3 +38,19 @@ export class ModelRegistryQueryError extends ModelGatewayError {
     super(`Falha ao acessar model_registry: ${message}`, "MODEL_REGISTRY_QUERY_FAILED");
   }
 }
+
+/** Único ponto de tradução code -> status HTTP, usado pelos Controllers admin/model-registry. */
+export function modelGatewayErrorStatus(error: ModelGatewayError): number {
+  switch (error.code) {
+    case "FORBIDDEN_ADMIN":
+      return 403;
+    case "MODEL_REGISTRY_ENTRY_NOT_FOUND":
+      return 404;
+    case "NO_ACTIVE_MODEL":
+      return 409;
+    case "MODEL_REGISTRY_QUERY_FAILED":
+      return 502;
+    default:
+      return 400;
+  }
+}
