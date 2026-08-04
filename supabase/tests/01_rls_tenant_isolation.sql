@@ -4,7 +4,7 @@
 -- Padrão de leitura da regra travada: tenant_id = (select nullif(auth.jwt()->'app_metadata'->>'tenant_id','')::uuid)
 
 begin;
-select plan(14);
+select plan(15);
 
 -- IDs fixos do seed.sql
 -- tenant A = Studio Bella Estética · tenant B = Consultório Dr. Marcos Silva
@@ -129,6 +129,23 @@ select throws_ok(
   'tenant A NÃO consegue SELECT em whatsapp_connections (ADR-018: service-role-only)'
 );
 
+-- 14. webhook_inbox: ADR-018/ADR-028 (RLS ON + FORCE, sem policy nenhuma, dedup do whatsapp-gateway)
+-- — SELECT bloqueado mesmo pro próprio tenant. Cobre o gap referenciado pelo it.todo() em
+-- src/tests/whatsapp-gateway.test.ts (idempotência/dedup do webhook é provada aqui a nível de banco,
+-- não no Vitest, já que webhook_inbox só é acessível via service_role).
+-- ponytail: throws_ok(sql, code, description) 3-arg NÃO resolve pro overload esperado — Postgres
+-- casa com (text,text,text), onde a 2ª posição vira "errmsg" comparado literal, não "code" (achado
+-- verificado ao vivo no projeto nqubjiosnlaatxxamiut: falso "not ok" mesmo com RLS correta). Forma
+-- 4-arg (sql, code, errmsg, description) é a que resolve certo — texto de errmsg é o exato do Postgres
+-- pra "permission denied for table X" (RLS ON sem policy). Mesmo padrão bugado existe nas asserções
+-- #6/#12/#13 pré-existentes (fora do escopo whatsapp-gateway) — ver SYNC REQUESTS no relatório final.
+select throws_ok(
+  format($$select 1 from iris.webhook_inbox where tenant_id = %L$$, :tenant_a),
+  '42501',
+  'permission denied for table webhook_inbox',
+  'tenant A NÃO consegue SELECT em webhook_inbox (ADR-018/028: service-role-only)'
+);
+
 -- ── troca para tenant B: confirma isolamento simétrico ──
 select set_config(
   'request.jwt.claims',
@@ -137,7 +154,7 @@ select set_config(
   true
 );
 
--- 14. contacts: tenant B enxerga só os próprios 2 contacts (A ganhou um extra no passo 5, não vaza pra B)
+-- 15. contacts: tenant B enxerga só os próprios 2 contacts (A ganhou um extra no passo 5, não vaza pra B)
 select is(
   (select count(*)::int from iris.contacts),
   2,
