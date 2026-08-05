@@ -2122,6 +2122,18 @@ export type Database = {
         Args: { p_telefone: string; p_tenant_id: string }
         Returns: string
       }
+      router_route_inbound_message: {
+        Args: { p_payload: Json; p_tenant_id: string }
+        Returns: string
+      }
+      router_consume_whatsapp_inbound: {
+        Args: { p_max: number }
+        Returns: Json
+      }
+      router_delete_whatsapp_inbound: {
+        Args: { p_msg_id: number }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
