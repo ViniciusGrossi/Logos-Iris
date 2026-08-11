@@ -4,19 +4,19 @@ date: 2026-08-04
 # ════════════════════════════════════════════════════
 # MÁQUINA — lido por /logos e hooks. Não renomear campos.
 # ════════════════════════════════════════════════════
-fase_atual: "7"
-etapa_atual: "Build Backend — wave 0"
+fase_atual: "8"
+etapa_atual: "Build Frontend — wave 0 (components)"
 # produto_tipo: saas-premium | dashboard | landing | mvp
 produto_tipo: "saas-premium"
-proximo_passo: "message-debouncer BUILT (inline, 2026-08-11). Wave 0 completa (5/5 features built). Pendente: review do message-debouncer + /logos next para validar gate de saída da fase 7."
+proximo_passo: "Fase 7 concluída (gate pass). /logos — Fase 8: Build Frontend (wave 0: components compartilhados)."
 # fases_skipped: preenchido pelo init conforme produto_tipo
 fases_skipped: []
 # gates: ex { fase_1: pass, fase_2: pass }  ·  features: ex { auth: { spec: approved, built: true } }
-gates: { fase_1: "pass", fase_2: "pass", fase_3: "pass", fase_4: "pass", fase_5: "pass", fase_6: "pass" }
+gates: { fase_1: "pass", fase_2: "pass", fase_3: "pass", fase_4: "pass", fase_5: "pass", fase_6: "pass", fase_7: "pass" }
 features: {
   whatsapp-gateway: { spec: "approved", wave: 0, built: true, reviewed: true },
   tenant-router-queue: { spec: "approved", wave: 0, built: true, reviewed: true },
-  message-debouncer: { spec: "approved", wave: 0, built: true, reviewed: false },
+  message-debouncer: { spec: "approved", wave: 0, built: true, reviewed: true },
   model-gateway-v1: { spec: "approved", wave: 0, built: true, reviewed: true },
   conversation-engine-v1: { spec: "approved", wave: 0, built: true, reviewed: true },
   persona-atendimento: { spec: "approved", wave: 1, built: false },
