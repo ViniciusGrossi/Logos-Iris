@@ -2134,6 +2134,10 @@ export type Database = {
         Args: { p_msg_id: number }
         Returns: boolean
       }
+      router_worker_verify_token: {
+        Args: { p_token: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never

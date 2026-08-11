@@ -140,7 +140,7 @@ describe("tenant-router-queue — roteamento sob lock por conversa (Requisitos 2
   });
 
   it.todo(
-    "critério #3/#4 (prova de DB, não unit test): pg_advisory_xact_lock(hashtext(conversation_id)) serializa " +
+    "critério #3/#4 (prova de DB, não unit test): pg_advisory_xact_lock(hashtext(tenant_id || ':' || contact_id)) serializa " +
       "mesma conversa e paraleliza conversas distintas — assertion em supabase/tests/05_tenant_router_advisory_lock.sql " +
       "(exige 2 sessões Postgres reais, impossível provar com fake em memória)"
   );

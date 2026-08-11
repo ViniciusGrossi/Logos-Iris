@@ -1,89 +1,95 @@
 // Logos Iris — tenant-router-worker (módulo 2, docs/specs/tenant-router-queue.md)
-// Consumidor da fila pgmq `whatsapp_inbound`. SEM endpoint HTTP público: acionado por pg_cron
-// (schedule interno), roda como service_role no runtime Deno das Edge Functions (ADR-031).
+// Consumidor da fila pgmq `whatsapp_inbound`. SEM endpoint HTTP público de verdade: acionado
+// 1x/minuto por pg_cron + pg_net (supabase/migrations/0017_tenant_router_worker_cron.sql), roda
+// como service_role no runtime Deno das Edge Functions (ADR-031).
 //
-// DESVIO/SYNC (ver relatório): este loop é o espelho, no runtime Deno, da orquestração de
-// `TenantRouterService` (src/services/tenant-router.service.ts) — a fronteira Next↔Deno impede
-// importar o Service tipado/testado. As regras (resolver tenant pelo número → descartar órfão →
-// dedup webhook_inbox → rotear sob advisory lock) são as MESMAS; a fonte de verdade e a cobertura
-// de teste (vitest) vivem no Service. Alternativa p/ eliminar a duplicação: hospedar o consumidor
-// como função agendada no runtime Next reusando o Service. Decisão do orquestrador.
+// Arquitetura real (não é mais desvio): este arquivo importa e chama o TenantRouterService de
+// verdade (src/services/tenant-router.service.ts) — o MESMO arquivo-fonte coberto pelos testes
+// vitest — via import map (deno.json resolve "@/" para "../../../src/" e os specifiers "zod"/
+// "@supabase/supabase-js" para npm:). Nenhuma lógica de negócio é reimplementada aqui: o único
+// código Deno-específico é o wiring de DI em deno-client.ts (client Supabase via Deno.env em vez
+// de process.env — mesmo espírito de tenant-router.factory.ts do lado Next) e a checagem de
+// autenticação da chamada do cron (token dedicado em Vault, ver migration 0017).
 //
 // Segurança: nenhum dado de contato/conteúdo em log — só ids técnicos e contadores (LGPD).
 
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { TenantRouterService } from "@/services/tenant-router.service";
+import { InvalidQueueMessageError } from "@/services/tenant-router.errors";
+import { SupabaseTenantLookupRepository } from "@/repositories/tenant-lookup.repository";
+import { SupabaseWebhookInboxRepository } from "@/repositories/webhook-inbox.repository";
+import { SupabaseConversationRoutingRepository } from "@/repositories/conversation-routing.repository";
+import { createDenoServiceClient } from "./deno-client.ts";
 
 const BATCH_SIZE = 20; // ponytail: lote fixo; tornar env se throughput exigir
 
 type QueueRow = { msg_id: number; message: Record<string, unknown> };
 
-Deno.serve(async () => {
-  const supabase = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    { db: { schema: "iris" }, auth: { persistSession: false } },
-  );
+Deno.serve(async (req: Request) => {
+  const db = createDenoServiceClient();
 
-  const { data: batch, error: consumeError } = await supabase.rpc(
-    "router_consume_whatsapp_inbound",
-    { p_max: BATCH_SIZE },
-  );
+  // Autenticação: só o pg_cron (via pg_net, migration 0017) deve invocar este worker — não é
+  // endpoint de usuário. verify_jwt=false no deploy (custom auth, ver deploy_edge_function); o
+  // token dedicado nunca sai do Postgres — a comparação roda inteira em SQL
+  // (iris.router_worker_verify_token), esta function só recebe true/false de volta.
+  const providedToken = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const { data: isAuthorized, error: authError } = await db.rpc("router_worker_verify_token", {
+    p_token: providedToken,
+  });
+  if (authError || !isAuthorized) {
+    return Response.json({ ok: false, stage: "auth" }, { status: 401 });
+  }
+
+  const tenantRouterService = new TenantRouterService({
+    tenantLookupRepo: new SupabaseTenantLookupRepository(db),
+    webhookInboxRepo: new SupabaseWebhookInboxRepository(db),
+    conversationRoutingRepo: new SupabaseConversationRoutingRepository(db),
+  });
+
+  const { data: batch, error: consumeError } = await db.rpc("router_consume_whatsapp_inbound", {
+    p_max: BATCH_SIZE,
+  });
   if (consumeError) {
     return Response.json({ ok: false, stage: "consume", error: consumeError.message }, { status: 500 });
   }
 
   const rows = (batch ?? []) as QueueRow[];
-  let roteadas = 0, duplicadas = 0, descartadas = 0, falhas = 0;
+  let roteadas = 0,
+    duplicadas = 0,
+    descartadas = 0,
+    falhas = 0;
 
   for (const row of rows) {
     try {
-      const payload = row.message;
-      const number = String(payload["tenant_whatsapp_number"] ?? "");
-      const messageId = String(payload["message_id"] ?? "");
-      if (!number || !messageId) throw new Error("item de fila sem tenant_whatsapp_number/message_id");
+      // TenantRouterService.routeInbound: valida (Zod) → resolve tenant (Req 1, filtra tenant
+      // ativo — Req 5) → dedup (Req 4/ADR-028) → roteia sob advisory lock (Req 2/3). Mesma lógica
+      // testada nos vitest, sem cópia.
+      const result = await tenantRouterService.routeInbound(row.message);
 
-      // 1. resolver tenant pelo número (Requisito 1)
-      const { data: tenant, error: tErr } = await supabase
-        .from("tenants").select("id").eq("whatsapp_number", number).maybeSingle();
-      if (tErr) throw tErr;
-
-      if (!tenant) {
-        // Requisito 5 — número órfão: descarta da fila, sem exceção, sem roteamento.
-        descartadas++;
-        await supabase.rpc("router_delete_whatsapp_inbound", { p_msg_id: row.msg_id });
-        continue;
+      switch (result.status) {
+        case "roteada":
+          roteadas++;
+          break;
+        case "duplicada":
+          duplicadas++;
+          break;
+        case "descartada":
+          descartadas++;
+          break;
       }
-      const tenantId = tenant.id as string;
-
-      // 2. dedup no ponto de entrada (Requisito 4 / ADR-028) — reentrega não roteia 2x.
-      const { data: inserted, error: dErr } = await supabase
-        .from("webhook_inbox")
-        .upsert(
-          { tenant_id: tenantId, provider_message_id: messageId },
-          { onConflict: "tenant_id,provider_message_id", ignoreDuplicates: true },
-        )
-        .select("tenant_id");
-      if (dErr) throw dErr;
-
-      if ((inserted?.length ?? 0) === 0) {
-        duplicadas++;
-        await supabase.rpc("router_delete_whatsapp_inbound", { p_msg_id: row.msg_id });
-        continue;
-      }
-
-      // 3. rotear sob advisory lock por conversa (Requisitos 2 e 3) — unidade atômica no SQL.
-      const { error: rErr } = await supabase.rpc("router_route_inbound_message", {
-        p_tenant_id: tenantId,
-        p_payload: payload,
-      });
-      if (rErr) throw rErr;
-
-      roteadas++;
-      await supabase.rpc("router_delete_whatsapp_inbound", { p_msg_id: row.msg_id });
-    } catch (_e) {
-      // Não deleta: mensagem reaparece após o vt (30s) p/ retry automático. Reprocesso é seguro
-      // (idempotência via webhook_inbox). Sem log de payload — só contador (LGPD).
+      // Estado terminal (roteada/duplicada/descartada) — remove da fila.
+      await db.rpc("router_delete_whatsapp_inbound", { p_msg_id: row.msg_id });
+    } catch (err) {
       falhas++;
+      if (err instanceof InvalidQueueMessageError) {
+        // Item permanentemente malformado (Zod nunca vai aceitar) — deletar agora. Sem isso, o
+        // item reaparece a cada vt (30s) para sempre e, como pgmq.read devolve os mais antigos
+        // primeiro, um lote de itens malformados (até BATCH_SIZE) satura o batch e trava mensagens
+        // novas atrás deles (achado do spec-reviewer, 2026-08-07 — poison-pill/starvation).
+        await db.rpc("router_delete_whatsapp_inbound", { p_msg_id: row.msg_id });
+      }
+      // Qualquer outro erro (rede/DB — transitório): não deleta, mensagem reaparece após o vt
+      // p/ retry automático. Reprocesso é seguro (idempotência via webhook_inbox, Requisito 4).
+      // Sem log de payload — só contador (LGPD).
     }
   }
 

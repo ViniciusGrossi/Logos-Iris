@@ -4,7 +4,7 @@ date: 2026-07-12
 projeto: "Logos Iris"
 fase: "build-backend"
 status: draft
-wave: 1
+wave: 0
 tags: [spec, feature, sdd]
 ---
 
@@ -22,7 +22,7 @@ O sistema resolve automaticamente qual tenant é dono de uma mensagem recebida e
 ## Requisitos Funcionais
 1. Dado `WhatsAppWebhookPayload.tenant_whatsapp_number`, o sistema resolve o `tenant_id` correspondente via `tenants.whatsapp_number` (unique).
 2. Mensagens da mesma conversa são processadas sempre na ordem de chegada — fila serializada por conversa, nunca fila global.
-3. Duas invocações concorrentes para a mesma conversa nunca processam simultaneamente (`pg_advisory_xact_lock(hashtext(conversation_id))` no worker).
+3. Duas invocações concorrentes para a mesma conversa nunca processam simultaneamente (`pg_advisory_xact_lock(hashtext(tenant_id || ':' || contact_id))` no worker — chave estável derivada de tenant+contato, não de `conversation_id` literal, já que na 1ª mensagem a conversa ainda não existe; ver DESVIO 1 em `0016_tenant_router_queue.sql`).
 4. Um `provider_message_id` já visto para o tenant nunca é enfileirado duas vezes — reafirma, no ponto de entrada da fila, o contrato de idempotência de `webhook_inbox` (ADR-028) estabelecido no módulo 1.
 5. Se o número de WhatsApp do payload não corresponder a nenhum tenant ativo, a mensagem é descartada/logada sem lançar exceção que derrube o processamento do webhook.
 6. A fila usa pgmq (Supabase Queues) — sem infraestrutura de fila externa nova (ADR-028).
@@ -46,14 +46,15 @@ interface ConversationQueueMessage {
 }
 
 // Worker consumidor: dentro da transação que processa o item,
-// pg_advisory_xact_lock(hashtext(conversation_id)) garante exclusão mútua por conversa (ADR-028).
+// pg_advisory_xact_lock(hashtext(tenant_id || ':' || contact_id)) garante exclusão mútua por
+// conversa (ADR-028) — chave de tenant+contato, não conversation_id (que ainda não existe na 1ª mensagem).
 ```
 
 ## Critérios de Aceite (= test cases do worker)
 - [ ] Given um payload com `tenant_whatsapp_number` cadastrado em `tenants.whatsapp_number`, When o TenantRouter resolve, Then retorna o `tenant_id` correto
 - [ ] Given um payload com número não cadastrado em nenhum tenant ativo, When o TenantRouter resolve, Then retorna `null` e a mensagem é descartada sem exceção não tratada
 - [ ] Given duas mensagens da mesma conversa chegando em sequência rápida, When ambas são processadas, Then a segunda só inicia processamento depois que a primeira libera o advisory lock (ordem preservada)
-- [ ] Given duas mensagens de conversas diferentes chegando simultaneamente, When ambas são processadas, Then processam em paralelo sem bloqueio cruzado (locks são por `conversation_id`, nunca globais)
+- [ ] Given duas mensagens de conversas diferentes chegando simultaneamente, When ambas são processadas, Then processam em paralelo sem bloqueio cruzado (locks são por chave tenant+contato, nunca globais)
 - [ ] Given um `provider_message_id` já registrado em `webhook_inbox` para o tenant, When a mesma mensagem é reprocessada, Then não é enfileirada de novo
 - [ ] RLS: tenant A não acessa dados de tenant B — a resolução nunca retorna/vaza `tenant_id` de outro tenant mesmo com `whatsapp_number` malformado ou parcialmente coincidente
 - [ ] Nenhum erro em console/logs
@@ -61,7 +62,7 @@ interface ConversationQueueMessage {
 
 ## Restrições Técnicas
 - **Tabelas:** `tenants` (schema, existente, leitura), `webhook_inbox` (aditiva, módulo 1), `conversation_state` (aditiva, ARCHITECTURE §1.3 — `conversation_id`/`tenant_id` resolvidos aqui, `debounce_until` é consumido pelo módulo 3).
-- **Endpoints:** nenhum HTTP novo — consumidor de fila acionado por pgmq dentro de Edge Function.
+- **Endpoints:** nenhum HTTP novo — consumidor de fila acionado por pgmq dentro de Edge Function. A invocação periódica do consumidor é via `pg_cron` + `pg_net` (1x/minuto, `supabase/migrations/0017_tenant_router_worker_cron.sql`) — sem essa invocação, mensagens ficariam paradas em `whatsapp_inbound` indefinidamente (achado crítico do spec-reviewer, corrigido nesta correção).
 - **Libs novas:** nenhuma (pgmq já é extensão Supabase decidida em ADR-028).
 - **Background jobs:** sim — todo o processamento pós-enqueue roda em Edge Function assíncrona, nunca no request/response do webhook.
 

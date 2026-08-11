@@ -15,10 +15,15 @@ export class SupabaseTenantLookupRepository implements TenantLookupRepository {
   constructor(private readonly db: IrisSupabaseClient) {}
 
   async findTenantIdByWhatsAppNumber(whatsappNumber: string): Promise<string | null> {
+    // Requisito 5 — tenant pausado/cancelado/soft-deletado nunca resolve, mesmo com o número
+    // batendo (achado ALTO do spec-reviewer, 2026-08-05, STATE-PROJECT.md). Filtro aplicado no
+    // WHERE (server), não em memória — nunca vaza id de tenant inativo.
     const { data, error } = await this.db
       .from("tenants")
       .select("id")
       .eq("whatsapp_number", whatsappNumber)
+      .eq("status", "ativo")
+      .is("deleted_at", null)
       .maybeSingle();
 
     if (error) throw new Error(`tenants lookup falhou: ${error.message}`);
