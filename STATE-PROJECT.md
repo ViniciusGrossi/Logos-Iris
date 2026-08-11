@@ -4,15 +4,15 @@ date: 2026-08-04
 # ════════════════════════════════════════════════════
 # MÁQUINA — lido por /logos e hooks. Não renomear campos.
 # ════════════════════════════════════════════════════
-fase_atual: "8"
-etapa_atual: "Build Frontend — wave 0 (components)"
+fase_atual: "9"
+etapa_atual: "Build Integrações"
 # produto_tipo: saas-premium | dashboard | landing | mvp
 produto_tipo: "saas-premium"
 proximo_passo: "Wave 0 frontend concluída (8 componentes em ui-shared/ + /dev/components). Próximo: /logos parallel — wave 1: telas (Inbox, Dashboard, Admin Tenants) com frontend-engineer ×2."
 # fases_skipped: preenchido pelo init conforme produto_tipo
 fases_skipped: []
 # gates: ex { fase_1: pass, fase_2: pass }  ·  features: ex { auth: { spec: approved, built: true } }
-gates: { fase_1: "pass", fase_2: "pass", fase_3: "pass", fase_4: "pass", fase_5: "pass", fase_6: "pass", fase_7: "pass" }
+gates: { fase_1: "pass", fase_2: "pass", fase_3: "pass", fase_4: "pass", fase_5: "pass", fase_6: "pass", fase_7: "pass", fase_8: "pass" }
 features: {
   whatsapp-gateway: { spec: "approved", wave: 0, built: true, reviewed: true },
   tenant-router-queue: { spec: "approved", wave: 0, built: true, reviewed: true },
