@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -8,9 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PersonaBadge } from "@/components/persona-badge";
 import { MessageBubble } from "@/components/message-bubble";
-import { EmptyState } from "@/components/empty-state";
-import { StateSwitcher, type ScreenState } from "@/components/state-switcher";
-import { conversations, messagesByConversation } from "@/mocks/conversations";
+import { ErrorBoundary } from "@/components/ui-shared/error-boundary";
+import { EmptyState } from "@/components/ui-shared/empty-state";
+import { useInbox } from "@/hooks/use-inbox";
 import type { Persona } from "@/mocks/types";
 import { cn } from "@/lib/utils";
 
@@ -24,43 +24,72 @@ const thinkingClass: Record<Persona, string> = {
 export default function InboxPage() {
   return (
     <Suspense>
-      <InboxScreen />
+      <ErrorBoundary>
+        <InboxScreen />
+      </ErrorBoundary>
     </Suspense>
   );
 }
 
 function InboxScreen() {
   const searchParams = useSearchParams();
-  const [screenState, setScreenState] = useState<ScreenState>("content");
-  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get("c"));
+  const {
+    state,
+    setState,
+    selectedId,
+    setSelectedId,
+    selected,
+    messages,
+    filteredConversations,
+    errorMessage,
+  } = useInbox();
 
-  const selected = conversations.find((c) => c.id === selectedId) ?? null;
-  const messages = selectedId ? messagesByConversation[selectedId] ?? [] : [];
+  // Inicializa selectedId da URL na primeira renderização
+  const urlConvId = searchParams.get("c");
+  if (urlConvId && selectedId === null) {
+    setSelectedId(urlConvId);
+  }
+
+  if (state === "error") {
+    return (
+      <div className="flex h-full flex-col">
+        <EmptyState
+          title="Erro ao carregar conversas"
+          description={errorMessage}
+          action={
+            <Button variant="outline" size="sm" onClick={() => setState("content")}>
+              Tentar novamente
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex justify-end border-b border-border px-4 py-2 md:px-6">
-        <StateSwitcher value={screenState} onChange={setScreenState} />
-      </div>
       <div className="flex min-h-0 flex-1">
+        {/* ── Lista de conversas ── */}
         <aside
           className={cn(
-            "w-full shrink-0 animate-in overflow-y-auto border-border duration-base ease-out-exp fade-in slide-in-from-left-2 md:w-80 md:border-r",
+            "w-full shrink-0 overflow-y-auto border-border md:w-80 md:border-r",
             selected && "hidden md:block"
           )}
         >
-          {screenState === "loading" && <ConversationListSkeleton />}
-          {screenState === "empty" && (
-            <EmptyState message="Nenhuma conversa ainda. Assim que alguém chamar, eu te mostro aqui." />
+          {state === "loading" && <ConversationListSkeleton />}
+          {state === "empty" && (
+            <EmptyState
+              title="Nenhuma conversa ainda"
+              description="Assim que alguém chamar, eu te mostro aqui."
+            />
           )}
-          {screenState === "content" &&
-            conversations.map((c, i) => (
+          {state === "content" &&
+            filteredConversations.map((c) => (
               <button
                 key={c.id}
                 onClick={() => setSelectedId(c.id)}
-                style={{ animationDelay: `${i * 40}ms` }}
                 className={cn(
-                  "flex w-full animate-in items-start gap-3 border-b border-border px-4 py-3 text-left duration-base ease-out-exp fade-in slide-in-from-bottom-1 hover:-translate-y-px hover:bg-bg-subtle hover:shadow-sm",
+                  "flex w-full items-start gap-3 border-b border-border px-4 py-3 text-left transition-all duration-[var(--duration-base)] ease-[var(--ease-out-exp)] hover:-translate-y-px hover:bg-bg-subtle hover:shadow-sm",
                   selectedId === c.id && "bg-bg-subtle"
                 )}
               >
@@ -87,16 +116,16 @@ function InboxScreen() {
             ))}
         </aside>
 
+        {/* ── Painel de chat ── */}
         <section
-          key={selected?.id ?? "empty"}
           className={cn(
-            "flex min-h-0 flex-1 animate-in flex-col duration-base ease-out-exp fade-in slide-in-from-right-2",
+            "flex min-h-0 flex-1 flex-col",
             !selected && "hidden md:flex"
           )}
         >
-          {screenState !== "content" || !selected ? (
+          {!selected ? (
             <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              {screenState === "loading" ? <Skeleton className="h-6 w-40" /> : "Selecione uma conversa"}
+              Selecione uma conversa
             </div>
           ) : (
             <>
@@ -116,8 +145,8 @@ function InboxScreen() {
                 </Button>
               </div>
               <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
-                {messages.map((m, i) => (
-                  <MessageBubble key={m.id} message={m} style={{ animationDelay: `${i * 60}ms` }} />
+                {messages.map((m) => (
+                  <MessageBubble key={m.id} message={m} />
                 ))}
                 <ThinkingIndicator persona={selected.persona} />
               </div>
