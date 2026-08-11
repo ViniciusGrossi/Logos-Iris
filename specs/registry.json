@@ -2,7 +2,7 @@
   "features": {
     "whatsapp-gateway": { "spec": "docs/specs/whatsapp-gateway.md", "status": "approved", "wave": 0, "built": true, "reviewed": true },
     "tenant-router-queue": { "spec": "docs/specs/tenant-router-queue.md", "status": "approved", "wave": 0, "built": true, "reviewed": false },
-    "message-debouncer": { "spec": "docs/specs/message-debouncer.md", "status": "approved", "wave": 0, "built": false, "reviewed": false },
+    "message-debouncer": { "spec": "docs/specs/message-debouncer.md", "status": "approved", "wave": 0, "built": true, "reviewed": false },
     "model-gateway-v1": { "spec": "docs/specs/model-gateway-v1.md", "status": "approved", "wave": 0, "built": true, "reviewed": true },
     "conversation-engine-v1": { "spec": "docs/specs/conversation-engine-v1.md", "status": "approved", "wave": 0, "built": true, "reviewed": true },
 

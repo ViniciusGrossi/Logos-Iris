@@ -8,7 +8,7 @@ fase_atual: "7"
 etapa_atual: "Build Backend — wave 0"
 # produto_tipo: saas-premium | dashboard | landing | mvp
 produto_tipo: "saas-premium"
-proximo_passo: "tenant-router-queue CORRIGIDA e reviewed:true (2 passadas de spec-reviewer independente, ambas com verificação ao vivo contra o DB real). Gate humano (Sync Requests) fechado — ver Concluído. Decisão pendente de Vinicius antes de seguir: (a) nada foi commitado no git nesta sessão (ver Bloqueios) — há um volume grande de trabalho de sessões anteriores + esta correção só no working tree; (b) o pipeline tenant-router-queue está code-correct mas PROVADAMENTE inativo em produção (0 linhas em webhook_inbox, 100% dos cron ticks retornam 401) até o schema `iris` ser exposto em Settings → API → Exposed Schemas do projeto Supabase — ação manual só Vinicius pode fazer. Depois disso: /logos parallel → message-debouncer, fechar wave 0."
+proximo_passo: "message-debouncer BUILT (inline, 2026-08-11). Wave 0 completa (5/5 features built). Pendente: review do message-debouncer + /logos next para validar gate de saída da fase 7."
 # fases_skipped: preenchido pelo init conforme produto_tipo
 fases_skipped: []
 # gates: ex { fase_1: pass, fase_2: pass }  ·  features: ex { auth: { spec: approved, built: true } }
@@ -16,7 +16,7 @@ gates: { fase_1: "pass", fase_2: "pass", fase_3: "pass", fase_4: "pass", fase_5:
 features: {
   whatsapp-gateway: { spec: "approved", wave: 0, built: true, reviewed: true },
   tenant-router-queue: { spec: "approved", wave: 0, built: true, reviewed: true },
-  message-debouncer: { spec: "approved", wave: 0, built: false },
+  message-debouncer: { spec: "approved", wave: 0, built: true, reviewed: false },
   model-gateway-v1: { spec: "approved", wave: 0, built: true, reviewed: true },
   conversation-engine-v1: { spec: "approved", wave: 0, built: true, reviewed: true },
   persona-atendimento: { spec: "approved", wave: 1, built: false },
@@ -104,8 +104,8 @@ tags: [status, roadmap]
   - [2026-08-07] **RESOLVIDO.** Decisão de Vinicius: achado 1 → corrigir agora (migration cron), não deferir p/ Fase 12. Achado 2 → worker Deno passa a chamar o `TenantRouterService` real (resolver fronteira Next↔Deno via import map), não manter duplicação com teste próprio. Achados 3 e 4 corrigidos independente. Worker `backend-engineer` (abf12184e67e03fa7) entregou as 4 correções (worker Deno com import map real, migration 0017 cron+pg_net+Vault, filtro `status='ativo'`/`deleted_at`, textos da spec). 2ª revisão independente (`spec-reviewer`, agentId ac4172dbe916da274, opus) confirmou achados 1-3 resolvidos com evidência ao vivo, mas achou 1 achado ALTO NOVO (poison-pill: item malformado nunca sai da fila e satura o batch — `InvalidQueueMessageError` não deletava) + achado 4 parcialmente corrigido (3 pontos de texto remanescentes) + 2 MÉDIO (tipo `router_worker_verify_token` faltando em `database.types.ts`, mascarado por `tsconfig.json` excluir `supabase/functions`) + 2 BAIXO (import map sem extensão `.ts` em 2 imports type-only, cast sem Zod do batch RPC). Corrigidos inline (poison-pill + tipo + os 3 textos + import map) e redeployados — `tenant-router-worker` v4 ACTIVE. `registry.json`/frontmatter: `built: true, reviewed: true`. Achados aceitos sem fix (baixo valor/escopo maior): tooling gap `deno check` no gate (ver Sync Requests), cast sem Zod do batch RPC (padrão pré-existente, risco baixo — dado gerado pela própria 0016).
 
 ## Bloqueios
-- [2026-08-07] **Schema `iris` continua fora de Exposed Schemas** (Settings → API → Data API, projeto Supabase compartilhado `nqubjiosnlaatxxamiut`) — já registrado como Sync Request desde a Fase 6 (2026-08-04), agora com evidência dura de que é um bloqueio REAL, não teórico: `pgmq.q_whatsapp_inbound` = 0 e `iris.webhook_inbox` = 0 linhas — nenhuma mensagem jamais foi roteada; 100% dos ticks do cron `iris_tenant_router_tick` retornam 401 (`PGRST106` na chamada RPC). O código está correto e verificado (2 revisões independentes), mas o pipeline `tenant-router-queue` está PROVADAMENTE inativo em produção até essa config manual no Dashboard. Só Vinicius pode mudar (fora do write-scope de qualquer worker/MCP). Ação: Project Settings → Data API → Exposed schemas → adicionar `iris`.
-- [2026-08-07] **Nada foi commitado no git nesta sessão** — decisão deliberada (regra do harness: nunca commitar sem pedido explícito do usuário). Isso inclui: todo o trabalho de Fase 6+7 de sessões anteriores que já estava uncommitted no início desta sessão (whatsapp-gateway, model-gateway-v1, conversation-engine-v1, tenant-router-queue original, migrations 0014-0016) MAIS a correção desta sessão (migration 0017, fix do worker Deno, fix do lookup). Tudo está no working tree de `master`, funcional e testado, mas nenhum `git commit` foi feito. Ação: Vinicius decidir quando/como commitar (provavelmente vale separar em commits coerentes por feature, não um único commit gigante).
+- [2026-08-11] ~~Schema `iris` fora de Exposed Schemas~~ RESOLVIDO: Vinicius adicionou `iris` em Settings → API → Exposed Schemas no projeto `nqubjiosnlaatxxamiut`.
+- [2026-08-11] ~~Git uncommitted~~ RESOLVIDO: commit `e568d41` (12 arquivos, tenant-router-queue post-review corrections).
 (bloqueio de 2026-07-15 resolvido em 2026-08-04: MCP Supabase reconectado, opção (a) do desbloqueio)
 
 ## Lições
