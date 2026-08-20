@@ -2,6 +2,7 @@ import type { WhatsAppGatewayAdapter, WhatsAppWebhookPayload, MediaType } from "
 import type { WhatsAppConnectionRepository } from "@/repositories/whatsapp-connection.repository";
 import { evolutionRawSchema } from "@/schemas/whatsapp-gateway.schema";
 import { InvalidPayloadError } from "@/lib/whatsapp-gateway/errors";
+import { EvolutionClient } from "@/lib/evolution.client";
 
 function stripJidSuffix(jid: string): string {
   return jid.replace(/@s\.whatsapp\.net$/, "").replace(/@g\.us$/, "");
@@ -43,7 +44,20 @@ function extractContent(
 
 // Evolution API (Baileys) — evento "messages.upsert". fromMe nativo em data.key.fromMe.
 export class EvolutionAdapter implements WhatsAppGatewayAdapter {
-  constructor(private readonly connectionRepo: WhatsAppConnectionRepository) {}
+  constructor(
+    private readonly connectionRepo: WhatsAppConnectionRepository,
+    // Injeção opcional p/ teste (fake/mocked client). Em produção resolve preguiçosamente a partir
+    // de EVOLUTION_API_BASE_URL — nunca no construtor, pra não quebrar testes que só exercitam
+    // receive() sem a env var setada (mesmo comportamento do fetch() cru que este client substitui).
+    private readonly clientOverride?: EvolutionClient
+  ) {}
+
+  private resolveClient(): EvolutionClient {
+    if (this.clientOverride) return this.clientOverride;
+    const baseUrl = process.env.EVOLUTION_API_BASE_URL;
+    if (!baseUrl) throw new Error("EVOLUTION_API_BASE_URL ausente — configure .env.local");
+    return new EvolutionClient({ baseUrl });
+  }
 
   receive(rawPayload: unknown): WhatsAppWebhookPayload {
     const parsed = evolutionRawSchema.safeParse(rawPayload);
@@ -77,21 +91,16 @@ export class EvolutionAdapter implements WhatsAppGatewayAdapter {
     if (!connection || connection.session_status !== "conectado") {
       throw new Error(`Evolution: tenant ${params.tenant_id} não está conectado`);
     }
-    // ponytail: wire format do POST /message/sendText/{instance} da Evolution API v2 (self-hosted,
-    // sem sandbox disponível pra verificar credencial real) — endpoint/headers documentados na
-    // Evolution API oficial, não verificados end-to-end aqui. Ver SYNC REQUESTS no relatório.
-    const baseUrl = process.env.EVOLUTION_API_BASE_URL;
-    if (!baseUrl) throw new Error("EVOLUTION_API_BASE_URL ausente — configure .env.local");
-
-    const response = await fetch(`${baseUrl}/message/sendText/${connection.instance_id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: connection.credentials_ref },
-      body: JSON.stringify({ number: params.to, text: params.content }),
+    // Hardening fase 9 (gap #1): antes chamava fetch() cru aqui — sem retry, sem timeout, throw
+    // genérico. Agora delega pro EvolutionClient (retry backoff+jitter, timeout via AbortController,
+    // erros tipados por categoria em src/lib/evolution.errors.ts).
+    const { messageId } = await this.resolveClient().sendText({
+      instanceId: connection.instance_id,
+      apiKey: connection.credentials_ref,
+      to: params.to,
+      content: params.content,
     });
-    if (!response.ok) throw new Error(`Evolution send falhou: HTTP ${response.status}`);
-    const body = (await response.json()) as { key?: { id?: string } };
-    if (!body.key?.id) throw new Error("Evolution send: resposta sem message id");
-    return { provider_message_id: body.key.id };
+    return { provider_message_id: messageId };
   }
 
   async status(tenant_id: string): Promise<{ session_status: "conectado" | "desconectado" | "pareando" }> {
@@ -106,15 +115,12 @@ export class EvolutionAdapter implements WhatsAppGatewayAdapter {
     // ponytail: endpoint de QR code (GET /instance/connect/{instance}) não verificado contra
     // instância real — mesma ressalva de send(). Gap de pairing endpoint já registrado na spec
     // (Sync Request candidata) é sobre o endpoint ADMIN, não sobre esta chamada interna do adapter.
-    const baseUrl = process.env.EVOLUTION_API_BASE_URL;
-    if (!baseUrl || !connection) throw new Error("Evolution: conexão/instância não configurada");
+    if (!connection) throw new Error("Evolution: conexão/instância não configurada");
 
-    const response = await fetch(`${baseUrl}/instance/connect/${connection.instance_id}`, {
-      headers: { apikey: connection.credentials_ref },
+    const { qrCodeBase64 } = await this.resolveClient().getConnectionQr({
+      instanceId: connection.instance_id,
+      apiKey: connection.credentials_ref,
     });
-    if (!response.ok) throw new Error(`Evolution pareamento falhou: HTTP ${response.status}`);
-    const body = (await response.json()) as { base64?: string };
-    if (!body.base64) throw new Error("Evolution pareamento: resposta sem QR code");
-    return { qr_code_base64: body.base64 };
+    return { qr_code_base64: qrCodeBase64 };
   }
 }

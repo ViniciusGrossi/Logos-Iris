@@ -2,6 +2,7 @@ import type { WhatsAppGatewayAdapter, WhatsAppWebhookPayload, MediaType } from "
 import type { WhatsAppConnectionRepository } from "@/repositories/whatsapp-connection.repository";
 import { cloudApiRawSchema } from "@/schemas/whatsapp-gateway.schema";
 import { InvalidPayloadError } from "@/lib/whatsapp-gateway/errors";
+import { CloudApiClient } from "@/lib/cloud-api.client";
 
 function normalizeDigits(phone: string): string {
   return phone.replace(/\D/g, "");
@@ -31,7 +32,15 @@ function mapMediaType(type: string): MediaType {
 // Ceiling documentado: verificar contra uma WABA real antes do primeiro pareamento Cloud API em
 // produção (ver SYNC REQUESTS no relatório).
 export class CloudApiAdapter implements WhatsAppGatewayAdapter {
-  constructor(private readonly connectionRepo: WhatsAppConnectionRepository) {}
+  constructor(
+    private readonly connectionRepo: WhatsAppConnectionRepository,
+    // Injeção opcional p/ teste — mesma decisão de EvolutionAdapter/OpenWaAdapter.
+    private readonly clientOverride?: CloudApiClient
+  ) {}
+
+  private resolveClient(): CloudApiClient {
+    return this.clientOverride ?? new CloudApiClient();
+  }
 
   receive(rawPayload: unknown): WhatsAppWebhookPayload {
     const parsed = cloudApiRawSchema.safeParse(rawPayload);
@@ -66,23 +75,14 @@ export class CloudApiAdapter implements WhatsAppGatewayAdapter {
     }
     // ponytail: Graph API real (POST /{phone_number_id}/messages) — shape correto documentado
     // pela Meta, mas sem token/WABA real disponível pra verificar end-to-end aqui.
-    const response = await fetch(`https://graph.facebook.com/v20.0/${connection.instance_id}/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${connection.credentials_ref}`,
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: params.to,
-        type: "text",
-        text: { body: params.content },
-      }),
+    // Hardening fase 9 (gap #1): antes fetch() cru sem retry/timeout/erro tipado — agora via
+    // CloudApiClient (mesmo padrão do EvolutionClient/OpenWaClient).
+    const { messageId } = await this.resolveClient().sendText({
+      phoneNumberId: connection.instance_id,
+      accessToken: connection.credentials_ref,
+      to: params.to,
+      content: params.content,
     });
-    if (!response.ok) throw new Error(`Cloud API send falhou: HTTP ${response.status}`);
-    const body = (await response.json()) as { messages?: { id?: string }[] };
-    const messageId = body.messages?.[0]?.id;
-    if (!messageId) throw new Error("Cloud API send: resposta sem message id");
     return { provider_message_id: messageId };
   }
 

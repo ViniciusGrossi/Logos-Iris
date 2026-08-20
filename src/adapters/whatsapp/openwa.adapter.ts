@@ -2,6 +2,7 @@ import type { WhatsAppGatewayAdapter, WhatsAppWebhookPayload, MediaType } from "
 import type { WhatsAppConnectionRepository } from "@/repositories/whatsapp-connection.repository";
 import { openwaRawSchema } from "@/schemas/whatsapp-gateway.schema";
 import { InvalidPayloadError } from "@/lib/whatsapp-gateway/errors";
+import { OpenWaClient } from "@/lib/openwa.client";
 
 function stripCUsSuffix(jid: string): string {
   return jid.replace(/@c\.us$/, "");
@@ -27,7 +28,18 @@ function mapMediaType(type: string): MediaType {
 // OpenWA (open-wa/wa-automate) — objeto Message. fromMe nativo TOP-LEVEL (caminho diferente
 // do aninhado data.key.fromMe da Evolution) — prova o contrato de normalização por adapter (ADR-029).
 export class OpenWaAdapter implements WhatsAppGatewayAdapter {
-  constructor(private readonly connectionRepo: WhatsAppConnectionRepository) {}
+  constructor(
+    private readonly connectionRepo: WhatsAppConnectionRepository,
+    // Injeção opcional p/ teste — mesma decisão de EvolutionAdapter (não resolve env no construtor).
+    private readonly clientOverride?: OpenWaClient
+  ) {}
+
+  private resolveClient(): OpenWaClient {
+    if (this.clientOverride) return this.clientOverride;
+    const baseUrl = process.env.OPENWA_API_BASE_URL;
+    if (!baseUrl) throw new Error("OPENWA_API_BASE_URL ausente — configure .env.local");
+    return new OpenWaClient({ baseUrl });
+  }
 
   receive(rawPayload: unknown): WhatsAppWebhookPayload {
     const parsed = openwaRawSchema.safeParse(rawPayload);
@@ -59,18 +71,15 @@ export class OpenWaAdapter implements WhatsAppGatewayAdapter {
     // ponytail: OpenWA roda embarcado (client.sendText via processo Node próprio, não REST puro)
     // — wire format aqui assume um wrapper HTTP local sobre a instância, não verificado contra
     // deploy real. Ver SYNC REQUESTS no relatório.
-    const baseUrl = process.env.OPENWA_API_BASE_URL;
-    if (!baseUrl) throw new Error("OPENWA_API_BASE_URL ausente — configure .env.local");
-
-    const response = await fetch(`${baseUrl}/sendText`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${connection.credentials_ref}` },
-      body: JSON.stringify({ instanceId: connection.instance_id, to: params.to, content: params.content }),
+    // Hardening fase 9 (gap #1): antes fetch() cru sem retry/timeout/erro tipado — agora via
+    // OpenWaClient (mesmo padrão do EvolutionClient).
+    const { messageId } = await this.resolveClient().sendText({
+      instanceId: connection.instance_id,
+      token: connection.credentials_ref,
+      to: params.to,
+      content: params.content,
     });
-    if (!response.ok) throw new Error(`OpenWA send falhou: HTTP ${response.status}`);
-    const body = (await response.json()) as { id?: string };
-    if (!body.id) throw new Error("OpenWA send: resposta sem message id");
-    return { provider_message_id: body.id };
+    return { provider_message_id: messageId };
   }
 
   async status(tenant_id: string): Promise<{ session_status: "conectado" | "desconectado" | "pareando" }> {
@@ -82,16 +91,10 @@ export class OpenWaAdapter implements WhatsAppGatewayAdapter {
     const connection = await this.connectionRepo.getByTenantId(tenant_id);
     if (connection?.session_status === "conectado") return { status: "ja_pareado" };
 
-    const baseUrl = process.env.OPENWA_API_BASE_URL;
-    if (!baseUrl || !connection) throw new Error("OpenWA: conexão/instância não configurada");
+    if (!connection) throw new Error("OpenWA: conexão/instância não configurada");
 
     // ponytail: mesmo caveat de wire format de send() — endpoint hipotético não verificado.
-    const response = await fetch(`${baseUrl}/getQrCode`, {
-      headers: { Authorization: `Bearer ${connection.credentials_ref}` },
-    });
-    if (!response.ok) throw new Error(`OpenWA pareamento falhou: HTTP ${response.status}`);
-    const body = (await response.json()) as { qr?: string };
-    if (!body.qr) throw new Error("OpenWA pareamento: resposta sem QR code");
-    return { qr_code_base64: body.qr };
+    const { qrCodeBase64 } = await this.resolveClient().getQrCode({ token: connection.credentials_ref });
+    return { qr_code_base64: qrCodeBase64 };
   }
 }

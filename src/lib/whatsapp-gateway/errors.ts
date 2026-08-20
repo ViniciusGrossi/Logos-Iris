@@ -59,3 +59,14 @@ export class InternalGatewayError extends WhatsAppGatewayError {
     this.name = "InternalGatewayError";
   }
 }
+
+// Hardening fase 9, gap #4 — rate limiting básico do endpoint webhook (janela deslizante em
+// memória, ver src/lib/whatsapp-gateway/rate-limiter.ts pro trade-off documentado).
+export class RateLimitedError extends WhatsAppGatewayError {
+  readonly httpStatus = 429;
+  readonly code = "rate_limited";
+  constructor(public readonly retryAfterSeconds: number) {
+    super(`Rate limit excedido — tente novamente em ${retryAfterSeconds}s`);
+    this.name = "RateLimitedError";
+  }
+}
