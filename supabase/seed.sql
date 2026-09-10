@@ -103,10 +103,20 @@ insert into iris.messages (tenant_id, conversation_id, provider_message_id, cont
    iris_private.encrypt_pii('Vi o anúncio de vocês, quero saber mais sobre a consulta'), 'recebida', 'texto', null, null, null, null, null);
 
 -- ── contact_memory_summaries ──
+-- c0002 (tenant A): resumo válido (expira_em no futuro) — caso feliz de persona-atendimento Story 2.
+-- c0001 (tenant A): resumo EXPIRADO (adicionado p/ persona-atendimento, ver 0020/supabase/tests/06) —
+-- prova que iris.memory_get_latest_summary nunca devolve resumo vencido (LGPD/ADR-026).
+-- c0004 (tenant B): resumo válido de outro tenant — usado no teste de isolamento RLS (06).
 insert into iris.contact_memory_summaries (contact_id, tenant_id, resumo_enc, periodo_inicio, periodo_fim, expira_em) values
   ('00000000-0000-0000-0000-0000000c0002', '00000000-0000-0000-0000-0000000000a1',
    iris_private.encrypt_pii('Cliente já fez procedimento de limpeza de pele em maio; prefere atendimento à tarde.'),
-   now() - interval '30 days', now() - interval '1 day', now() + interval '89 days');
+   now() - interval '30 days', now() - interval '1 day', now() + interval '89 days'),
+  ('00000000-0000-0000-0000-0000000c0001', '00000000-0000-0000-0000-0000000000a1',
+   iris_private.encrypt_pii('Resumo antigo, já vencido — não deve mais ser injetado no contexto.'),
+   now() - interval '120 days', now() - interval '91 days', now() - interval '1 day'),
+  ('00000000-0000-0000-0000-0000000c0004', '00000000-0000-0000-0000-0000000000b1',
+   iris_private.encrypt_pii('Paciente prefere confirmação de consulta por WhatsApp na véspera.'),
+   now() - interval '10 days', now() - interval '1 day', now() + interval '80 days');
 
 -- ── knowledge_base_entries + artisanal_layer_versions ──
 insert into iris.knowledge_base_entries (tenant_id, campo, conteudo, status, versao, publicado_em) values

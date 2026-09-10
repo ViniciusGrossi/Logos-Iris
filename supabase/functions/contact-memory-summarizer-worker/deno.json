@@ -1,0 +1,19 @@
+{
+  "imports": {
+    "zod": "npm:zod@^4.4.3",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@^2.112.0",
+    "@/": "../../../src/",
+    "@/services/contact-memory.service": "../../../src/services/contact-memory.service.ts",
+    "@/services/contact-memory.errors": "../../../src/services/contact-memory.errors.ts",
+    "@/services/model-gateway.service": "../../../src/services/model-gateway.service.ts",
+    "@/services/model-gateway.errors": "../../../src/services/model-gateway.errors.ts",
+    "@/repositories/contact-memory.repository": "../../../src/repositories/contact-memory.repository.ts",
+    "@/repositories/model-registry.repository": "../../../src/repositories/model-registry.repository.ts",
+    "@/schemas/contact-memory.schema": "../../../src/schemas/contact-memory.schema.ts",
+    "@/schemas/model-registry.schema": "../../../src/schemas/model-registry.schema.ts",
+    "@/types/contact-memory.types": "../../../src/types/contact-memory.types.ts",
+    "@/types/model-gateway.types": "../../../src/types/model-gateway.types.ts",
+    "@/lib/supabase/service-client": "../../../src/lib/supabase/service-client.ts",
+    "@/lib/supabase/database.types": "../../../src/lib/supabase/database.types.ts"
+  }
+}

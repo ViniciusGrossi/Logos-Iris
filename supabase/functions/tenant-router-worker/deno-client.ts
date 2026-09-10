@@ -6,7 +6,7 @@
 // duplicada: mesmo espírito de tenant-router.factory.ts do lado Next (que também só monta
 // dependências e delega tudo ao Service/Repositories reais).
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { IrisSupabaseClient } from "@/lib/supabase/service-client";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -23,6 +23,28 @@ export function createDenoServiceClient(): IrisSupabaseClient {
   // schema "iris": mesmo default do produto usado no lado Next (nunca "public" — CLAUDE.md).
   return createClient<Database, "iris">(url, serviceRoleKey, {
     db: { schema: "iris" },
+    auth: { persistSession: false },
+  });
+}
+
+/**
+ * Client Deno SEM schema pinado — espelha getServiceRoleClient() (src/lib/supabase/
+ * service-client.ts) do lado Next. Necessário pra Repositories que já fazem `.schema("iris")`
+ * por-query (ex.: SupabaseModelRegistryRepository) em vez de schema fixo na criação do client —
+ * os dois padrões coexistem no codebase (ver Lição 2026-08-04 em STATE-PROJECT.md sobre os dois
+ * service-client.ts divergentes), então o wiring de DI precisa oferecer os dois tipos de client.
+ */
+export function createDenoGenericServiceClient(): SupabaseClient {
+  const url = Deno.env.get("SUPABASE_URL");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (!url || !serviceRoleKey) {
+    throw new Error(
+      "SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY ausentes no ambiente da Edge Function (injetados automaticamente pelo runtime Supabase)."
+    );
+  }
+
+  return createClient(url, serviceRoleKey, {
     auth: { persistSession: false },
   });
 }

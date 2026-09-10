@@ -82,6 +82,10 @@ const sidebarItems: SidebarItem[] = [
 ];
 
 function BrokenComponent(): React.ReactNode {
+  // ErrorBoundary do React só captura erro durante render no client, nunca no SSR — lançar
+  // incondicionalmente quebrava o `next build` (prerender estático desta página roda no server).
+  // Guard de client-only preserva a demonstração real (erro pós-hidratação) sem derrubar o build.
+  if (typeof window === "undefined") return null;
   throw new Error("Erro simulado para demonstrar ErrorBoundary");
 }
 

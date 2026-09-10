@@ -437,6 +437,7 @@ export type Database = {
           publicado_em: string | null
           status: string
           tenant_id: string
+          updated_at: string
           versao: number
         }
         Insert: {
@@ -448,6 +449,7 @@ export type Database = {
           publicado_em?: string | null
           status?: string
           tenant_id: string
+          updated_at?: string
           versao: number
         }
         Update: {
@@ -459,6 +461,7 @@ export type Database = {
           publicado_em?: string | null
           status?: string
           tenant_id?: string
+          updated_at?: string
           versao?: number
         }
         Relationships: [
