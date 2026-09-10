@@ -1,6 +1,6 @@
 ---
 title: "Logos Iris — State of Project"
-date: 2026-08-13
+date: 2026-09-10
 # ════════════════════════════════════════════════════
 # MÁQUINA — lido por /logos e hooks. Não renomear campos.
 # ════════════════════════════════════════════════════
@@ -84,8 +84,7 @@ tags: [status, roadmap]
 ## Workers Ativos
 > Preenchido por /logos ao spawnar agents (máx 2 simultâneos). Limpo ao concluir.
 
-- [2026-08-13] `backend-engineer` — `cost-observability-v1` (wave 1, rodada 3/4). Worktree `feat/cost-observability-v1`.
-- [2026-08-13] `backend-engineer` — `persona-agendamento` (wave 1, rodada 3/4). Worktree `feat/persona-agendamento`.
+- — (nenhum. Rodada 3/2026-08-13 de `cost-observability-v1` + `persona-agendamento` nunca aterrissou — sessão morreu, registry confirma `built: false`. Slots limpos na retomada 2026-09-10.)
 
 ## Sync Requests Pendentes
 > Spec Sync Requests acumulados na wave atual. Apresentados em batch.
@@ -114,6 +113,8 @@ tags: [status, roadmap]
   - [2026-08-07] **RESOLVIDO.** Decisão de Vinicius: achado 1 → corrigir agora (migration cron), não deferir p/ Fase 12. Achado 2 → worker Deno passa a chamar o `TenantRouterService` real (resolver fronteira Next↔Deno via import map), não manter duplicação com teste próprio. Achados 3 e 4 corrigidos independente. Worker `backend-engineer` (abf12184e67e03fa7) entregou as 4 correções (worker Deno com import map real, migration 0017 cron+pg_net+Vault, filtro `status='ativo'`/`deleted_at`, textos da spec). 2ª revisão independente (`spec-reviewer`, agentId ac4172dbe916da274, opus) confirmou achados 1-3 resolvidos com evidência ao vivo, mas achou 1 achado ALTO NOVO (poison-pill: item malformado nunca sai da fila e satura o batch — `InvalidQueueMessageError` não deletava) + achado 4 parcialmente corrigido (3 pontos de texto remanescentes) + 2 MÉDIO (tipo `router_worker_verify_token` faltando em `database.types.ts`, mascarado por `tsconfig.json` excluir `supabase/functions`) + 2 BAIXO (import map sem extensão `.ts` em 2 imports type-only, cast sem Zod do batch RPC). Corrigidos inline (poison-pill + tipo + os 3 textos + import map) e redeployados — `tenant-router-worker` v4 ACTIVE. `registry.json`/frontmatter: `built: true, reviewed: true`. Achados aceitos sem fix (baixo valor/escopo maior): tooling gap `deno check` no gate (ver Sync Requests), cast sem Zod do batch RPC (padrão pré-existente, risco baixo — dado gerado pela própria 0016).
 
 ## Bloqueios
+- [2026-09-10] **Dispatch de workers registrados indisponível nesta sessão.** Os SOPs `@backend-engineer` etc. vivem em `Logos-Tech-master/.claude/agents/` (23 agents), mas a sessão não foi aberta com o monorepo como raiz — `subagent_type` registrado não carrega. Para `/logos parallel` real, reabrir o Claude Code com cwd = raiz do monorepo. Enquanto isso: build inline ou `general-purpose` + path do SOP (mais caro).
+- [2026-09-10] **Retomada pós-hiato (~4 semanas).** Working tree = estado real (wave 1 parcial). `git init` feito na pasta do projeto, remote `origin` → `github.com/ViniciusGrossi/Logos-Iris.git`, `core.longpaths=true`. `origin/main` congelado em `f3713cf` (13/08, wave 0 + frontend + fase 9 hardening — SEM a wave 1 backend). Commit local `76c184c` criado como baseline (1 ahead, **não pushado** — push nesse repo externo historicamente feito por Vinicius direto).
 - [2026-08-13] ~~Repo `Logos-Iris` desincronizado~~ RESOLVIDO: Vinicius confirmou que `github.com/ViniciusGrossi/Logos-Iris.git` é o alvo de deploy (uso fora do que aparece no código, ex. Vercel via dashboard — sem CI/workflow/vercel.json no repo referenciando isso). Ressincronizado via commit `f3713cf` (branch `main` do repo aninhado, `--git-dir`/`--work-tree` explícitos pra não confundir com o monorepo) — push feito por Vinicius diretamente (bloqueado pro Claude pelo classifier de auto-mode mesmo após autorização em chat; push de remote externo não-`Logos-Tech` exige rodar fora da sessão ou ajuste de permissão em settings.json). Verificado: `main` local e `origin/main` idênticos em `f3713cf`, zero divergência. **Processo daqui pra frente:** não há automação ligando os dois repos — sessões de `/logos` que tocarem `Logos Iris/` devem sincronizar manualmente este repo aninhado após trabalho relevante (mesmo `git add -A` + commit + push nesse `.git`, escopado com `--git-dir`/`--work-tree` explícitos pra nunca depender de `cd`). O `.git` aninhado PERMANECE no disco (é o repo de deploy, não pode ser removido) — continua valendo a Lição abaixo sobre `isolation:"worktree"` cair nele por engano.
 - [2026-08-11] ~~Schema `iris` fora de Exposed Schemas~~ RESOLVIDO: Vinicius adicionou `iris` em Settings → API → Exposed Schemas no projeto `nqubjiosnlaatxxamiut`.
 - [2026-08-11] ~~Git uncommitted~~ RESOLVIDO: commit `e568d41` (12 arquivos, tenant-router-queue post-review corrections).
