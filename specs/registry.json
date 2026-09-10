@@ -13,7 +13,7 @@
     "human-handoff": { "spec": "docs/specs/human-handoff.md", "status": "approved", "wave": 1, "built": true, "reviewed": false },
     "painel-cliente-v1": { "spec": "docs/specs/painel-cliente-v1.md", "status": "approved", "wave": 1, "built": false, "reviewed": false },
     "feature-gating-v1": { "spec": "docs/specs/feature-gating-v1.md", "status": "approved", "wave": 1, "built": true, "reviewed": true },
-    "cost-observability-v1": { "spec": "docs/specs/cost-observability-v1.md", "status": "approved", "wave": 1, "built": false, "reviewed": false },
+    "cost-observability-v1": { "spec": "docs/specs/cost-observability-v1.md", "status": "approved", "wave": 1, "built": true, "reviewed": false },
 
     "persona-vendas": { "spec": null, "status": "draft", "wave": 2, "built": false, "reviewed": false },
     "persona-sdr": { "spec": null, "status": "draft", "wave": 2, "built": false, "reviewed": false },
