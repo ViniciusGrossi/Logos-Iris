@@ -7,13 +7,17 @@ import type { EngineMessageRepository } from "@/repositories/engine-message.repo
 import type { HandoffRepository } from "@/repositories/handoff.repository";
 import type { QueueRepository } from "@/repositories/queue.repository";
 import { InvalidPayloadError } from "@/lib/whatsapp-gateway/errors";
+import { HumanHandoffService, type HumanHandoffTriggers } from "@/services/human-handoff.service";
 
 export interface WhatsAppGatewayServiceDeps {
   adapters: Record<WhatsAppProvider, WhatsAppGatewayAdapter>;
   webhookInboxRepo: WebhookInboxRepository;
   tenantLookupRepo: TenantLookupRepository;
   engineMessageRepo: EngineMessageRepository;
+  /** findActiveConversationId (contato → conversa). A escrita da pausa é do HumanHandoffService. */
   handoffRepo: HandoffRepository;
+  /** Casa canônica dos gatilhos from_me_detectado (Requisito 4) e comando_chat #eu/#iris (Requisito 3). */
+  humanHandoffService: HumanHandoffTriggers;
   queueRepo: QueueRepository;
 }
 
@@ -58,14 +62,31 @@ export class WhatsAppGatewayService {
         payload.message_id
       );
       if (!emittedByEngine) {
-        // Requisito 4 / ADR-029: from_me=true e id não é da própria engine → humano mandou do celular.
+        // from_me=true e id não é da própria engine → o DONO mandou do celular.
         const conversationId = await this.deps.handoffRepo.findActiveConversationId(tenantId, payload.from);
         if (conversationId) {
-          await this.deps.handoffRepo.pauseForHandoff({
-            tenant_id: tenantId,
-            conversation_id: conversationId,
-            gatilho: "from_me_detectado",
-          });
+          const comando = HumanHandoffService.parseChatCommand(payload.content);
+          if (comando === "pause") {
+            // Requisito 3: `#eu` → pausa com gatilho='comando_chat' (não 'from_me_detectado').
+            await this.deps.humanHandoffService.pauseConversation({
+              tenant_id: tenantId,
+              conversation_id: conversationId,
+              gatilho: "comando_chat",
+            });
+          } else if (comando === "resume") {
+            // Requisito 3: `#iris` → retoma (direto se não for pausa longa; o Service decide).
+            await this.deps.humanHandoffService.resumeConversation({
+              tenant_id: tenantId,
+              conversation_id: conversationId,
+              confirmado_pelo_dono: false,
+            });
+          } else {
+            // Requisito 4 / ADR-029: qualquer outra mensagem do dono → auto-pausa por N horas.
+            await this.deps.humanHandoffService.pauseFromOwnerMessage({
+              tenant_id: tenantId,
+              conversation_id: conversationId,
+            });
+          }
         }
         // Nenhuma conversa ativa encontrada pro contato: no-op gracioso (edge case documentado).
       }

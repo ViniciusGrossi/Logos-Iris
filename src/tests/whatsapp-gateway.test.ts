@@ -9,6 +9,7 @@ import type { WebhookInboxRepository } from "@/repositories/webhook-inbox.reposi
 import type { TenantLookupRepository } from "@/repositories/tenant-lookup.repository";
 import type { EngineMessageRepository } from "@/repositories/engine-message.repository";
 import type { HandoffRepository } from "@/repositories/handoff.repository";
+import type { HumanHandoffTriggers } from "@/services/human-handoff.service";
 import type { QueueRepository } from "@/repositories/queue.repository";
 import type { WhatsAppWebhookPayload } from "@/schemas/whatsapp-gateway.schema";
 import { InvalidPayloadError } from "@/lib/whatsapp-gateway/errors";
@@ -104,6 +105,24 @@ class FakeHandoffRepo implements HandoffRepository {
   }
 }
 
+class FakeHumanHandoff implements HumanHandoffTriggers {
+  readonly pauseConversationCalls: Parameters<HumanHandoffTriggers["pauseConversation"]>[0][] = [];
+  readonly resumeCalls: Parameters<HumanHandoffTriggers["resumeConversation"]>[0][] = [];
+  readonly fromOwnerCalls: Parameters<HumanHandoffTriggers["pauseFromOwnerMessage"]>[0][] = [];
+  async pauseConversation(params: Parameters<HumanHandoffTriggers["pauseConversation"]>[0]) {
+    this.pauseConversationCalls.push(params);
+    return { status: "pausada" as const };
+  }
+  async resumeConversation(params: Parameters<HumanHandoffTriggers["resumeConversation"]>[0]) {
+    this.resumeCalls.push(params);
+    return { status: "ativa" as const };
+  }
+  async pauseFromOwnerMessage(params: Parameters<HumanHandoffTriggers["pauseFromOwnerMessage"]>[0]) {
+    this.fromOwnerCalls.push(params);
+    return { status: "pausada" as const };
+  }
+}
+
 class FakeQueueRepo implements QueueRepository {
   readonly calls: { tenantId: string; payload: WhatsAppWebhookPayload }[] = [];
   async enqueueInboundMessage(tenantId: string, payload: WhatsAppWebhookPayload): Promise<void> {
@@ -125,6 +144,7 @@ function buildService(opts: {
   const tenantLookupRepo = new FakeTenantLookupRepo(opts.tenantByNumber);
   const engineMessageRepo = new FakeEngineMessageRepo(opts.engineEmitted ?? false);
   const handoffRepo = new FakeHandoffRepo(opts.conversationId ?? null);
+  const humanHandoffService = new FakeHumanHandoff();
   const queueRepo = new FakeQueueRepo();
 
   const service = new WhatsAppGatewayService({
@@ -137,10 +157,11 @@ function buildService(opts: {
     tenantLookupRepo,
     engineMessageRepo,
     handoffRepo,
+    humanHandoffService,
     queueRepo,
   });
 
-  return { service, webhookInboxRepo, tenantLookupRepo, engineMessageRepo, handoffRepo, queueRepo };
+  return { service, webhookInboxRepo, tenantLookupRepo, engineMessageRepo, handoffRepo, humanHandoffService, queueRepo };
 }
 
 describe("whatsapp-gateway — normalização fromMe por adapter (Requisito 2, ADR-029)", () => {
@@ -187,7 +208,7 @@ describe("whatsapp-gateway — idempotência (Requisito 3, ADR-028)", () => {
 
 describe("whatsapp-gateway — auto-pausa em from_me humano (Requisito 4, ADR-029, Story 22)", () => {
   it("critério #4: from_me=true e id não emitido pela engine aciona handoff e pausa a conversa", async () => {
-    const { service, handoffRepo } = buildService({
+    const { service, humanHandoffService } = buildService({
       tenantByNumber: { "5511988887777": TENANT_A },
       engineEmitted: false,
       conversationId: "conv-1",
@@ -195,16 +216,13 @@ describe("whatsapp-gateway — auto-pausa em from_me humano (Requisito 4, ADR-02
 
     await service.handleWebhook("evolution", evolutionFixtureFromMe);
 
-    expect(handoffRepo.pauseCalls).toHaveLength(1);
-    expect(handoffRepo.pauseCalls[0]).toMatchObject({
-      tenant_id: TENANT_A,
-      conversation_id: "conv-1",
-      gatilho: "from_me_detectado",
-    });
+    // conteúdo "oi" não é comando → delega a auto-pausa (gatilho from_me_detectado) ao HumanHandoffService.
+    expect(humanHandoffService.fromOwnerCalls).toEqual([{ tenant_id: TENANT_A, conversation_id: "conv-1" }]);
+    expect(humanHandoffService.pauseConversationCalls).toHaveLength(0);
   });
 
   it("critério #5: from_me=true mas id corresponde a envio da própria engine — nenhuma auto-pausa (falso-positivo evitado)", async () => {
-    const { service, handoffRepo } = buildService({
+    const { service, humanHandoffService } = buildService({
       tenantByNumber: { "5511988887777": TENANT_A },
       engineEmitted: true,
       conversationId: "conv-1",
@@ -212,18 +230,53 @@ describe("whatsapp-gateway — auto-pausa em from_me humano (Requisito 4, ADR-02
 
     await service.handleWebhook("evolution", evolutionFixtureFromMe);
 
-    expect(handoffRepo.pauseCalls).toHaveLength(0);
+    expect(humanHandoffService.fromOwnerCalls).toHaveLength(0);
   });
 
   it("edge case: from_me=true, id não é da engine, mas não existe conversa ativa pro contato — no-op gracioso, sem throw", async () => {
-    const { service, handoffRepo } = buildService({
+    const { service, humanHandoffService } = buildService({
       tenantByNumber: { "5511988887777": TENANT_A },
       engineEmitted: false,
       conversationId: null,
     });
 
     await expect(service.handleWebhook("evolution", evolutionFixtureFromMe)).resolves.toEqual({ received: true });
-    expect(handoffRepo.pauseCalls).toHaveLength(0);
+    expect(humanHandoffService.fromOwnerCalls).toHaveLength(0);
+  });
+
+  it("Requisito 3: `#eu` do dono → pausa com gatilho='comando_chat' (não from_me_detectado)", async () => {
+    const { service, humanHandoffService } = buildService({
+      tenantByNumber: { "5511988887777": TENANT_A },
+      engineEmitted: false,
+      conversationId: "conv-1",
+    });
+
+    await service.handleWebhook("evolution", {
+      ...evolutionFixtureFromMe,
+      data: { ...evolutionFixtureFromMe.data, message: { conversation: "#eu" } },
+    });
+
+    expect(humanHandoffService.pauseConversationCalls).toEqual([
+      { tenant_id: TENANT_A, conversation_id: "conv-1", gatilho: "comando_chat" },
+    ]);
+    expect(humanHandoffService.fromOwnerCalls).toHaveLength(0);
+  });
+
+  it("Requisito 3: `#iris` do dono → retoma a conversa", async () => {
+    const { service, humanHandoffService } = buildService({
+      tenantByNumber: { "5511988887777": TENANT_A },
+      engineEmitted: false,
+      conversationId: "conv-1",
+    });
+
+    await service.handleWebhook("evolution", {
+      ...evolutionFixtureFromMe,
+      data: { ...evolutionFixtureFromMe.data, message: { conversation: "#iris" } },
+    });
+
+    expect(humanHandoffService.resumeCalls).toEqual([
+      { tenant_id: TENANT_A, conversation_id: "conv-1", confirmado_pelo_dono: false },
+    ]);
   });
 });
 
