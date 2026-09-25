@@ -1,21 +1,31 @@
 // Logos Iris — debouncer-flush-worker (módulo 3, docs/specs/message-debouncer.md)
-// Acionado por pg_cron a cada 10s (ADR-031) via pg_net. Varre conversation_state com
-// debounce_until vencido, agrega os message_ids e invoca o Engine para cada conversa.
-// Nesta v1, o Engine ainda não está integrado (conversation-engine-v1 é só compilePrompt) —
-// o worker faz o flush e limpa o debounce, preparando o terreno para a integração na wave 1.
+// Acionado 1x/minuto por pg_cron + pg_net (supabase/migrations/0019_debouncer_flush_cron.sql),
+// roda como service_role no runtime Deno das Edge Functions (ADR-031) — mesma arquitetura de
+// tenant-router-worker: importa e chama o MessageDebouncerService real (src/services/
+// message-debouncer.service.ts, já coberto pelos testes vitest) via import map, nenhuma lógica de
+// negócio duplicada aqui.
 //
-// Segurança: autenticado por token dedicado em Vault (mesmo padrão de 0017). Nenhum dado
-// de contato/conteúdo em log — só ids técnicos e contadores (LGPD).
+// TODO(conversation-engine-v1): esta v1 do Engine só implementa compilePrompt (camadas 1-2,
+// ADR-027) — SEM Controller/route.ts e SEM consumir model-gateway.service.ts (decisão registrada
+// em docs/specs/conversation-engine-v1.md, seção "Fora de Escopo", confirmada pelo spec-reviewer
+// em 2026-08-04). Não existe hoje nenhum caller que receba os message_ids agregados e dispare o
+// Engine de fato — mesma situação já aceita para escalateByLowConfidence/escalateByCustomerRequest
+// (human-handoff, Sync Request 2026-09-10) e para logModelUsage (cost-observability-v1). Este
+// worker cumpre os Requisitos 3/4 da spec (varrer + limpar o buffer) e loga a contagem agregada;
+// acionar o Engine de verdade fica para quando ele ganhar um loop de tools/HTTP real.
+//
+// Segurança: nenhum conteúdo de mensagem em log — só ids técnicos e contadores (LGPD).
 
 import { MessageDebouncerService } from "@/services/message-debouncer.service";
 import { SupabaseMessageDebouncerRepository } from "@/repositories/message-debouncer.repository";
-import { createDenoServiceClient } from "../tenant-router-worker/deno-client.ts";
+import { createDenoServiceClient } from "./deno-client.ts";
 
 Deno.serve(async (req: Request) => {
   const db = createDenoServiceClient();
 
-  // Autenticação: mesmo padrão do tenant-router-worker (0017) — token dedicado em Vault,
-  // comparação roda 100% em SQL, a function nunca vê o valor real.
+  // Autenticação: só o pg_cron (via pg_net, migration 0019) deve invocar este worker — mesmo
+  // token dedicado em Vault reusado de 0017 (iris_private.tenant_router_worker_token()),
+  // comparação 100% em SQL via iris.router_worker_verify_token — nunca a service_role key.
   const providedToken = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   const { data: isAuthorized, error: authError } = await db.rpc("router_worker_verify_token", {
     p_token: providedToken,
@@ -24,52 +34,38 @@ Deno.serve(async (req: Request) => {
     return Response.json({ ok: false, stage: "auth" }, { status: 401 });
   }
 
-  const debouncerRepo = new SupabaseMessageDebouncerRepository(db);
-  const debouncerService = new MessageDebouncerService({ debouncerRepo });
+  const debouncerService = new MessageDebouncerService({
+    debouncerRepo: new SupabaseMessageDebouncerRepository(db),
+  });
 
-  // Requisito 3: flushDue — varre conversas com debounce vencido
   let due: { conversationId: string; messageIds: string[] }[];
   try {
     due = await debouncerService.flushDue();
   } catch (err) {
     return Response.json(
-      { ok: false, stage: "flush", error: err instanceof Error ? err.message : "unknown" },
+      { ok: false, stage: "flush_due", error: err instanceof Error ? err.message : String(err) },
       { status: 500 }
     );
   }
 
-  let processadas = 0;
-  let falhas = 0;
+  let limpas = 0,
+    falhas = 0;
 
-  for (const batch of due) {
+  for (const { conversationId, messageIds } of due) {
     try {
-      // Nesta v1 (wave 0), o Engine ainda não está integrado — o conversation-engine-v1
-      // é só compilePrompt (função pura, sem HTTP). O flush prepara o terreno: quando o
-      // Engine completo entrar na wave 1, este loop vai chamar ConversationEngineService
-      // com os message_ids agregados.
-      //
-      // Por enquanto, apenas limpamos o debounce (CA#4) para que a conversa saia do
-      // índice parcial e não seja reprocessada no próximo tick.
-
-      // TODO(wave 1): integrar com ConversationEngineService.processBatch(batch)
-      // Ex: await engineService.processBatch({
-      //   conversationId: batch.conversationId,
-      //   messageIds: batch.messageIds,
-      // });
-
-      await debouncerService.clearDebounce(batch.conversationId);
-      processadas++;
-    } catch (err) {
+      // Ver TODO(conversation-engine-v1) no topo do arquivo — Engine ainda não tem loop real
+      // pra consumir messageIds. Requisito 4: limpar o buffer é o que evita reprocessamento
+      // infinito da mesma conversa, isso roda mesmo sem o Engine estar pronto.
+      await debouncerService.clearDebounce(conversationId);
+      limpas++;
+      void messageIds; // agregados, ainda sem consumidor — contagem já refletida no length abaixo
+    } catch {
       falhas++;
-      // Erro no clearDebounce de UMA conversa não para as outras.
-      // Sem log de payload — só contador (LGPD).
+      // Transitório (rede/DB): não propaga — conversa permanece com debounce_until vencido e
+      // será revarrida no próximo tick (idempotente, sem duplicar efeito nenhum já que o único
+      // efeito hoje é o clear).
     }
   }
 
-  return Response.json({
-    ok: true,
-    due_count: due.length,
-    processadas,
-    falhas,
-  });
+  return Response.json({ ok: true, conversas_devidas: due.length, limpas, falhas });
 });

@@ -73,13 +73,15 @@ export class CloudApiAdapter implements WhatsAppGatewayAdapter {
     if (!connection || connection.session_status !== "conectado") {
       throw new Error(`Cloud API: tenant ${params.tenant_id} não está conectado`);
     }
+    // ALTO-2 (fix 0024): credencial resolvida via Vault sob demanda, só aqui onde é de fato usada.
+    const accessToken = await this.connectionRepo.resolveCredentials(params.tenant_id);
     // ponytail: Graph API real (POST /{phone_number_id}/messages) — shape correto documentado
     // pela Meta, mas sem token/WABA real disponível pra verificar end-to-end aqui.
     // Hardening fase 9 (gap #1): antes fetch() cru sem retry/timeout/erro tipado — agora via
     // CloudApiClient (mesmo padrão do EvolutionClient/OpenWaClient).
     const { messageId } = await this.resolveClient().sendText({
       phoneNumberId: connection.instance_id,
-      accessToken: connection.credentials_ref,
+      accessToken,
       to: params.to,
       content: params.content,
     });

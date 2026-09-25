@@ -1,6 +1,10 @@
 {
   "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@^2.112.0",
     "@/": "../../../src/",
-    "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
+    "@/services/message-debouncer.service": "../../../src/services/message-debouncer.service.ts",
+    "@/repositories/message-debouncer.repository": "../../../src/repositories/message-debouncer.repository.ts",
+    "@/lib/supabase/service-client": "../../../src/lib/supabase/service-client.ts",
+    "@/lib/supabase/database.types": "../../../src/lib/supabase/database.types.ts"
   }
 }

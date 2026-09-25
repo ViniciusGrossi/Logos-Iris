@@ -7,13 +7,13 @@
     "conversation-engine-v1": { "spec": "docs/specs/conversation-engine-v1.md", "status": "approved", "wave": 0, "built": true, "reviewed": true },
 
     "persona-atendimento": { "spec": "docs/specs/persona-atendimento.md", "status": "approved", "wave": 1, "built": true, "reviewed": true },
-    "persona-agendamento": { "spec": "docs/specs/persona-agendamento.md", "status": "approved", "wave": 1, "built": false, "reviewed": false },
+    "persona-agendamento": { "spec": "docs/specs/persona-agendamento.md", "status": "approved", "wave": 1, "built": true, "reviewed": true },
     "knowledge-base-v1": { "spec": "docs/specs/knowledge-base-v1.md", "status": "approved", "wave": 1, "built": true, "reviewed": true },
     "contact-memory": { "spec": "docs/specs/contact-memory.md", "status": "approved", "wave": 1, "built": true, "reviewed": true },
-    "human-handoff": { "spec": "docs/specs/human-handoff.md", "status": "approved", "wave": 1, "built": true, "reviewed": false },
+    "human-handoff": { "spec": "docs/specs/human-handoff.md", "status": "approved", "wave": 1, "built": true, "reviewed": true },
     "painel-cliente-v1": { "spec": "docs/specs/painel-cliente-v1.md", "status": "approved", "wave": 1, "built": false, "reviewed": false },
     "feature-gating-v1": { "spec": "docs/specs/feature-gating-v1.md", "status": "approved", "wave": 1, "built": true, "reviewed": true },
-    "cost-observability-v1": { "spec": "docs/specs/cost-observability-v1.md", "status": "approved", "wave": 1, "built": true, "reviewed": false },
+    "cost-observability-v1": { "spec": "docs/specs/cost-observability-v1.md", "status": "approved", "wave": 1, "built": true, "reviewed": true },
 
     "persona-vendas": { "spec": null, "status": "draft", "wave": 2, "built": false, "reviewed": false },
     "persona-sdr": { "spec": null, "status": "draft", "wave": 2, "built": false, "reviewed": false },

@@ -91,12 +91,14 @@ export class EvolutionAdapter implements WhatsAppGatewayAdapter {
     if (!connection || connection.session_status !== "conectado") {
       throw new Error(`Evolution: tenant ${params.tenant_id} não está conectado`);
     }
+    // ALTO-2 (fix 0024): credencial resolvida via Vault sob demanda, só aqui onde é de fato usada.
+    const apiKey = await this.connectionRepo.resolveCredentials(params.tenant_id);
     // Hardening fase 9 (gap #1): antes chamava fetch() cru aqui — sem retry, sem timeout, throw
     // genérico. Agora delega pro EvolutionClient (retry backoff+jitter, timeout via AbortController,
     // erros tipados por categoria em src/lib/evolution.errors.ts).
     const { messageId } = await this.resolveClient().sendText({
       instanceId: connection.instance_id,
-      apiKey: connection.credentials_ref,
+      apiKey,
       to: params.to,
       content: params.content,
     });
@@ -117,9 +119,10 @@ export class EvolutionAdapter implements WhatsAppGatewayAdapter {
     // (Sync Request candidata) é sobre o endpoint ADMIN, não sobre esta chamada interna do adapter.
     if (!connection) throw new Error("Evolution: conexão/instância não configurada");
 
+    const apiKey = await this.connectionRepo.resolveCredentials(tenant_id);
     const { qrCodeBase64 } = await this.resolveClient().getConnectionQr({
       instanceId: connection.instance_id,
-      apiKey: connection.credentials_ref,
+      apiKey,
     });
     return { qr_code_base64: qrCodeBase64 };
   }

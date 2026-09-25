@@ -56,6 +56,9 @@ class FakeConnectionRepo implements WhatsAppConnectionRepository {
   async getByTenantId(): Promise<WhatsAppConnectionRow | null> {
     return null;
   }
+  async resolveCredentials(): Promise<string> {
+    return "";
+  }
   async updateSessionStatus(): Promise<void> {}
 }
 

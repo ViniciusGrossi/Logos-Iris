@@ -68,6 +68,8 @@ export class OpenWaAdapter implements WhatsAppGatewayAdapter {
     if (!connection || connection.session_status !== "conectado") {
       throw new Error(`OpenWA: tenant ${params.tenant_id} não está conectado`);
     }
+    // ALTO-2 (fix 0024): credencial resolvida via Vault sob demanda, só aqui onde é de fato usada.
+    const token = await this.connectionRepo.resolveCredentials(params.tenant_id);
     // ponytail: OpenWA roda embarcado (client.sendText via processo Node próprio, não REST puro)
     // — wire format aqui assume um wrapper HTTP local sobre a instância, não verificado contra
     // deploy real. Ver SYNC REQUESTS no relatório.
@@ -75,7 +77,7 @@ export class OpenWaAdapter implements WhatsAppGatewayAdapter {
     // OpenWaClient (mesmo padrão do EvolutionClient).
     const { messageId } = await this.resolveClient().sendText({
       instanceId: connection.instance_id,
-      token: connection.credentials_ref,
+      token,
       to: params.to,
       content: params.content,
     });
@@ -93,8 +95,9 @@ export class OpenWaAdapter implements WhatsAppGatewayAdapter {
 
     if (!connection) throw new Error("OpenWA: conexão/instância não configurada");
 
+    const token = await this.connectionRepo.resolveCredentials(tenant_id);
     // ponytail: mesmo caveat de wire format de send() — endpoint hipotético não verificado.
-    const { qrCodeBase64 } = await this.resolveClient().getQrCode({ token: connection.credentials_ref });
+    const { qrCodeBase64 } = await this.resolveClient().getQrCode({ token });
     return { qr_code_base64: qrCodeBase64 };
   }
 }

@@ -63,20 +63,24 @@ select throws_ok(
 set local role service_role;
 
 -- ── Requisito 1/6: memory_fetch_messages_for_period ──
+-- Janela ampla (1 ano) em vez de "now() - 1 day": as mensagens do seed.sql não têm created_at
+-- fixado (default now() NO MOMENTO em que o seed foi aplicado) — rodando este teste dias/semanas
+-- depois do seed, uma janela de 1 dia teria zero mensagens. Achado ao rodar ao vivo em 2026-09-25
+-- (banco seedado em 2026-08), ver STATE-PROJECT.md Concluído.
 select is(
-  (select count(*)::int from iris.memory_fetch_messages_for_period(:tenant_a::uuid, :contact_a_c0001::uuid, now() - interval '1 day', now() + interval '1 day')),
+  (select count(*)::int from iris.memory_fetch_messages_for_period(:tenant_a::uuid, :contact_a_c0001::uuid, now() - interval '365 days', now() + interval '1 day')),
   2,
   'memory_fetch_messages_for_period devolve as 2 mensagens seedadas do contato c0001 (tenant A)'
 );
 
 select is(
-  (select conteudo from iris.memory_fetch_messages_for_period(:tenant_a::uuid, :contact_a_c0001::uuid, now() - interval '1 day', now() + interval '1 day') where direcao = 'recebida' limit 1),
+  (select conteudo from iris.memory_fetch_messages_for_period(:tenant_a::uuid, :contact_a_c0001::uuid, now() - interval '365 days', now() + interval '1 day') where direcao = 'recebida' limit 1),
   'Oi, queria marcar um horário pra sexta',
   'memory_fetch_messages_for_period devolve o conteúdo DECRIPTADO da mensagem recebida'
 );
 
 select is(
-  (select count(*)::int from iris.memory_fetch_messages_for_period(:tenant_a::uuid, :contact_b_c0003::uuid, now() - interval '1 day', now() + interval '1 day')),
+  (select count(*)::int from iris.memory_fetch_messages_for_period(:tenant_a::uuid, :contact_b_c0003::uuid, now() - interval '365 days', now() + interval '1 day')),
   0,
   'memory_fetch_messages_for_period NÃO cruza tenant — contact_id de B consultado com tenant_id de A devolve 0 linhas'
 );
@@ -98,16 +102,13 @@ select ok(
   'memory_create_summary: tenant B (plano Premium) → expira_em = created_at + 180 dias — prova que NÃO é hardcoded, deriva do plano de cada tenant'
 );
 
+-- adaptado: schema iris_private NÃO concede USAGE direto a service_role (defesa em profundidade,
+-- confirmado ao rodar ao vivo em 2026-09-25) — validar o round-trip de encrypt/decrypt via a API
+-- real (memory_get_latest_summary), nunca por acesso direto a iris_private.
 select is(
-  (
-    select iris_private.decrypt_pii(cms.resumo_enc)
-    from iris.contact_memory_summaries cms
-    where cms.contact_id = :contact_a_c0001::uuid
-    order by cms.created_at desc
-    limit 1
-  ),
+  (select resumo from iris.memory_get_latest_summary(:tenant_a::uuid, :contact_a_c0001::uuid)),
   'resumo pgTAP — tenant A (plano Básico, 90d)',
-  'memory_create_summary grava resumo_enc CIFRADO — decripta de volta pro texto exato passado (nunca o texto puro em outra coluna)'
+  'memory_create_summary grava resumo_enc CIFRADO; memory_get_latest_summary decripta de volta pro texto exato (via API real)'
 );
 
 select throws_ok(
@@ -118,8 +119,12 @@ select throws_ok(
 );
 
 -- ══════════════════════════════════════════════════════════════════════════
--- Requisito 3: purge diário (100% SQL, sem contraparte em TS — mesmo padrão de 0013)
+-- Requisito 3: purge diário (100% SQL, sem contraparte em TS — mesmo padrão de 0013). As funções
+-- iris_private.* abaixo (purge/enqueue) são invocadas pelo pg_cron como o dono do job, NUNCA via
+-- service_role/Data API — voltar pro role ambiente da conexão (dono das funções) pra fixtures e
+-- chamadas diretas, não é bypass de teste, é o mesmo modelo de privilégio da produção.
 -- ══════════════════════════════════════════════════════════════════════════
+reset role;
 -- fixture: resumo JÁ EXPIRADO do seed (c0001, ver supabase/seed.sql) + um knowledge_chunk órfão
 -- apontando pra ele via source_id — prova a higiene extra (comentário da migração 0022 §3).
 select set_config(
@@ -163,6 +168,16 @@ select is(
 -- Requisito 5: cascata de esquecimento (contacts.deleted_at → hard-delete)
 -- id fixo literal em vez de RETURNING ... \gset (ver nota de topo do arquivo).
 -- ══════════════════════════════════════════════════════════════════════════
+-- Baseline ANTES da cascata (achado do /code-review: um "count >= 1" fixo não pega uma cascata
+-- PARCIAL — ex. de 2 pra 1 registro de c0004. Captura o número real de linhas de c0004 agora
+-- (já inclui o 2º resumo inserido pelo teste de memory_create_summary de tenant B acima) e compara
+-- IGUAL depois da cascata — prova "nenhuma linha tocada", não só "sobrou pelo menos 1").
+select set_config(
+  'pgtap.c0004_baseline_count',
+  (select count(*)::text from iris.contact_memory_summaries where contact_id = :contact_b_c0004::uuid),
+  true
+);
+
 insert into iris.contacts (id, tenant_id, telefone_hash, telefone_enc)
 values ('00000000-0000-0000-0000-0000000cf0f0', :tenant_a::uuid, iris_private.phone_hash('+5511900000099'), iris_private.encrypt_pii('+5511900000099'));
 
@@ -194,8 +209,8 @@ select is(
 
 select is(
   (select count(*)::int from iris.contact_memory_summaries where contact_id = :contact_b_c0004::uuid),
-  1,
-  'contacts_cascade_forget_trigger NÃO afeta contact_memory_summaries de OUTRO contato (c0004, tenant B intacto)'
+  current_setting('pgtap.c0004_baseline_count')::int,
+  'contacts_cascade_forget_trigger NÃO afeta contact_memory_summaries de OUTRO contato (c0004, tenant B intacto — contagem idêntica à baseline pré-cascata)'
 );
 
 -- ══════════════════════════════════════════════════════════════════════════
@@ -207,6 +222,10 @@ select set_config(
   true
 );
 
+-- memory_consume_summarize_queue/memory_delete_summarize_queue_item são os wrappers iris.* que o
+-- worker (service_role) de fato chama — volta pro role de teste.
+set local role service_role;
+
 select ok(
   jsonb_array_length(iris.memory_consume_summarize_queue(50)) >= 1,
   'memory_consume_summarize_queue devolve pelo menos a mensagem de teste recém-enfileirada'
@@ -217,8 +236,12 @@ select ok(
   'memory_delete_summarize_queue_item remove a mensagem de teste da fila com sucesso'
 );
 
+reset role;
+
 -- ══════════════════════════════════════════════════════════════════════════
--- Requisito 1 (orquestração) — enqueue diário encontra contato(s) com mensagem nova a resumir
+-- Requisito 1 (orquestração) — enqueue diário encontra contato(s) com mensagem nova a resumir.
+-- iris_private.enqueue_contact_memory_summarization roda como o dono do cron job (ambiente), não
+-- service_role — ver nota da seção de purge acima.
 -- ══════════════════════════════════════════════════════════════════════════
 select ok(
   iris_private.enqueue_contact_memory_summarization() >= 1,

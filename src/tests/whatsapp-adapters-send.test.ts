@@ -36,6 +36,12 @@ class FakeConnectionRepo implements WhatsAppConnectionRepository {
   async getByTenantId(): Promise<WhatsAppConnectionRow | null> {
     return this.row;
   }
+  // ALTO-2 (fix 0024): send() resolve a credencial via resolveCredentials(), não mais via
+  // connection.credentials_ref direto — o fake devolve o mesmo valor da row (já "resolvido" do
+  // ponto de vista do teste, que não exercita o Vault de verdade).
+  async resolveCredentials(): Promise<string> {
+    return this.row?.credentials_ref ?? "";
+  }
   async updateSessionStatus(): Promise<void> {}
 }
 

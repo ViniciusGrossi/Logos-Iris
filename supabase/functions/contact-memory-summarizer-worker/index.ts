@@ -1,69 +1,47 @@
 // Logos Iris — contact-memory-summarizer-worker (docs/specs/contact-memory.md)
-// Consumidor da fila pgmq `contact_memory_summarize`. SEM endpoint HTTP público de verdade:
-// acionado 1x/minuto por pg_cron + pg_net (supabase/migrations/0022_contact_memory_generation_
-// purge_cascade.sql §7), roda como service_role no runtime Deno das Edge Functions (ADR-031),
-// reusando o MESMO token dedicado do tenant-router-worker (0017/0019 já estabeleceram esse reuso
-// entre workers distintos em vez de criar um secret novo por worker).
+// Consumidor da fila pgmq `contact_memory_summarize` (migração 0022). Acionado 1x/minuto por
+// pg_cron + pg_net, roda como service_role no runtime Deno das Edge Functions (ADR-031) — mesma
+// arquitetura de tenant-router-worker/debouncer-flush-worker: importa e chama o
+// ContactMemoryService real (src/services/contact-memory.service.ts, já coberto pelos testes
+// vitest) via import map, nenhuma lógica de negócio duplicada aqui.
 //
-// Arquitetura: importa e chama o ContactMemoryService de verdade (src/services/
-// contact-memory.service.ts) — o MESMO arquivo-fonte coberto pelos testes vitest — via import map
-// (deno.json). Nenhuma lógica de negócio de geração/persistência é reimplementada aqui.
+// summaryGenerator: a spec (Fora de Escopo) delega "qual prompt, qual modelo" ao ModelGateway —
+// mas o codebase ainda não tem NENHUM client de invocação real de LLM (ModelGatewayService só tem
+// routeModel, que ESCOLHE o modelo, nunca chama uma API de completion — ver
+// src/services/model-gateway.service.ts). Por isso o generator injetado aqui lança
+// SummaryGenerationNotImplementedError (já tipado em src/services/contact-memory.errors.ts,
+// pensado exatamente para este worker) em vez de fabricar um resumo heurístico — nunca gravar
+// resumo_enc com conteúdo inventado. Trocar por uma chamada real assim que o ModelGateway ganhar
+// um client de completion (Sync Requests 2026-09-10: task_type dedicado de sumarização +
+// tier_do_plano real no generator, hoje hardcoded como stopgap documentado).
 //
-// A única peça que NÃO está pronta em lugar nenhum do codebase é a síntese do resumo em si —
-// Fora de Escopo desta spec ("Heurística/modelo de sumarização... usa ModelGateway já
-// especificado, você só chama, não implementa lógica de prompt"). ModelGatewayService.routeModel
-// só ESCOLHE o modelo (nenhum client de completion real existe ainda em nenhum módulo — nem
-// ConversationEngineService chama LLM de verdade nesta v1). Este worker prova o "só chama" (rota
-// o modelo antes de tentar sintetizar) e then falha de forma TIPADA e não-destrutiva: a mensagem
-// fica na fila para reprocesso quando a capability real existir — nunca grava resumo
-// fabricado/heurístico em resumo_enc (violaria o Requisito 6). Mesmo espírito do TODO deixado em
-// debouncer-flush-worker/index.ts para a integração com o Engine.
-//
-// Segurança: nenhum dado de contato/conteúdo em log — só ids técnicos e contadores (LGPD).
+// Segurança: nenhum conteúdo de mensagem/resumo em log — só ids técnicos e contadores (LGPD).
 
 import { ZodError } from "zod";
-
 import { ContactMemoryService, type ContactMemorySummaryGenerator } from "@/services/contact-memory.service";
-import { NoMessagesInPeriodError, SummaryGenerationNotImplementedError } from "@/services/contact-memory.errors";
 import { SupabaseContactMemoryRepository } from "@/repositories/contact-memory.repository";
-import { ModelGatewayService } from "@/services/model-gateway.service";
-import { SupabaseModelRegistryRepository } from "@/repositories/model-registry.repository";
-import { createDenoServiceClient, createDenoGenericServiceClient } from "../tenant-router-worker/deno-client.ts";
+import { SummaryGenerationNotImplementedError, NoMessagesInPeriodError } from "@/services/contact-memory.errors";
+import { createDenoServiceClient } from "./deno-client.ts";
 
-const BATCH_SIZE = 20; // ponytail: lote fixo, mesmo default de tenant-router-worker/debouncer-flush-worker
+const BATCH_SIZE = 20; // mesmo default de tenant-router-worker
 
-type QueueRow = { msg_id: number; message: Record<string, unknown> };
-
-/**
- * ModelGatewaySummaryGenerator — chama ModelGateway.routeModel (cumprindo "você só chama" da
- * spec) para provar a integração, mas NÃO tem client de invocação de LLM real disponível em
- * nenhum lugar do codebase ainda (ver comentário de topo do arquivo). Lança
- * SummaryGenerationNotImplementedError de propósito — nunca inventa/heuristicamente concatena um
- * "resumo" a partir das mensagens brutas (isso violaria Requisito 6 e Fora de Escopo da spec).
- */
-class ModelGatewaySummaryGenerator implements ContactMemorySummaryGenerator {
-  constructor(private readonly modelGateway: ModelGatewayService) {}
-
-  async generate(params: { tenant_id: string }): Promise<string> {
-    // task_type 'conversa_principal' e tier_do_plano 'basico' como stopgap: model_registry (0004)
-    // não tem um task_type dedicado a sumarização ainda (a própria spec, seção "Tokens e APIs
-    // Externas", já deixa em aberto "task_type: conversa_principal ou dedicado a sumarização"),
-    // e este generator não tem acesso ao tier real do plano do tenant (routeModel exige, mas
-    // ContactMemorySummaryGenerator não injeta um lookup de plano) — SYNC REQUESTs no report.
-    await this.modelGateway.routeModel({
-      tenant_id: params.tenant_id,
-      task_type: "conversa_principal",
-      tier_do_plano: "basico",
-    });
+const summaryGenerator: ContactMemorySummaryGenerator = {
+  generate() {
     throw new SummaryGenerationNotImplementedError();
-  }
-}
+  },
+};
+
+type QueueRow = {
+  msg_id: number;
+  message: { tenant_id: string; contact_id: string; periodo_inicio: string; periodo_fim: string };
+};
 
 Deno.serve(async (req: Request) => {
   const db = createDenoServiceClient();
 
-  // Autenticação: só o pg_cron (via pg_net, migração 0022) deve invocar este worker — não é
-  // endpoint de usuário. Mesmo token dedicado de 0017/0019 (nunca sai do Postgres).
+  // Autenticação: só o pg_cron deve invocar este worker — mesmo token dedicado em Vault reusado
+  // de 0017/0019 (iris_private.tenant_router_worker_token()), comparação 100% em SQL via
+  // iris.router_worker_verify_token — nunca a service_role key do projeto.
   const providedToken = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   const { data: isAuthorized, error: authError } = await db.rpc("router_worker_verify_token", {
     p_token: providedToken,
@@ -74,16 +52,13 @@ Deno.serve(async (req: Request) => {
 
   const contactMemoryService = new ContactMemoryService({
     contactMemoryRepo: new SupabaseContactMemoryRepository(db),
-    // SupabaseModelRegistryRepository faz .schema("iris") por-query — precisa de um client SEM
-    // schema pinado na criação (mesmo padrão de getServiceRoleClient() no lado Next), por isso
-    // um segundo client aqui em vez de reusar `db` (pinado em "iris", ver deno-client.ts).
-    summaryGenerator: new ModelGatewaySummaryGenerator(
-      new ModelGatewayService(new SupabaseModelRegistryRepository(createDenoGenericServiceClient())),
-    ),
+    summaryGenerator,
   });
 
-  // @ts-expect-error — "memory_consume_summarize_queue" é RPC nova (migração 0022), ainda não
-  // está em database.types.ts (mesmo padrão de contact-memory.repository.ts).
+  // memory_consume_summarize_queue/memory_delete_summarize_queue_item (migração 0022) — wrappers
+  // SECURITY DEFINER em iris, mesmo padrão de router_consume_whatsapp_inbound/
+  // router_delete_whatsapp_inbound (0016). Sem Repository dedicado: operação de fila é interna do
+  // worker, não faz parte do contrato público do ContactMemoryService.
   const { data: batch, error: consumeError } = await db.rpc("memory_consume_summarize_queue", {
     p_max: BATCH_SIZE,
   });
@@ -93,51 +68,42 @@ Deno.serve(async (req: Request) => {
 
   const rows = (batch ?? []) as QueueRow[];
   let resumidas = 0,
+    aguardando_capability = 0,
     descartadas = 0,
-    aguardandoCapability = 0,
     falhas = 0;
 
   for (const row of rows) {
     try {
       await contactMemoryService.summarizeContactMemory({
-        tenant_id: row.message.tenant_id as string,
-        contact_id: row.message.contact_id as string,
-        periodo_inicio: row.message.periodo_inicio as string,
-        periodo_fim: row.message.periodo_fim as string,
+        tenant_id: row.message.tenant_id,
+        contact_id: row.message.contact_id,
+        periodo_inicio: row.message.periodo_inicio,
+        periodo_fim: row.message.periodo_fim,
       });
-
       resumidas++;
-      // @ts-expect-error — RPC nova (migração 0022), ainda não está em database.types.ts.
       await db.rpc("memory_delete_summarize_queue_item", { p_msg_id: row.msg_id });
     } catch (err) {
-      falhas++;
-
-      if (err instanceof ZodError || err instanceof NoMessagesInPeriodError) {
-        // Poison-pill (payload malformado) OU terminal-sem-mudança (mesmo período nunca vai ter
-        // mensagem nova): reprocessar não muda o resultado. Deletar agora — mesmo raciocínio do
-        // achado de poison-pill/starvation do spec-reviewer em 2026-08-07 (tenant-router-worker):
-        // sem isso, o item reapareceria a cada vt (60s) pra sempre e poderia saturar o lote.
-        descartadas++;
-        // @ts-expect-error — RPC nova (migração 0022), ainda não está em database.types.ts.
-        await db.rpc("memory_delete_summarize_queue_item", { p_msg_id: row.msg_id });
-      } else if (err instanceof SummaryGenerationNotImplementedError) {
-        // Diferente de poison-pill: o item é válido, só não é acionável AINDA (capability real de
-        // LLM não existe no codebase). Não deleta — fica pra reprocessar quando existir. Não é a
-        // mesma starvation do achado de 2026-08-07 porque TODOS os itens desta fila estão nesse
-        // mesmo estado hoje (não há item "bom" sendo bloqueado atrás de um poison-pill).
-        aguardandoCapability++;
+      if (err instanceof SummaryGenerationNotImplementedError) {
+        // Não é poison-pill nem falha transitória — a capability real ainda não existe. NÃO
+        // deleta da fila: reaparece após o vt (60s) e será tentada de novo no próximo tick, até
+        // o generator real existir. Contabilizado à parte de "falhas" pra não disparar alarme.
+        aguardando_capability++;
+        continue;
       }
-      // Qualquer outro erro (rede/DB — transitório): não deleta, reaparece após o vt (60s) pra
-      // retry automático. Sem log de payload — só contador (LGPD).
+      if (err instanceof ZodError || err instanceof NoMessagesInPeriodError) {
+        // Poison-pill (achado do /code-review, mesma classe do bug de tenant-router-worker
+        // 2026-08-07): payload malformado (ZodError) ou período sem nenhuma mensagem nova
+        // (NoMessagesInPeriodError) NUNCA vai ter sucesso em retry — reaparecer a cada vt (60s)
+        // pra sempre satura o batch. Item permanentemente inválido: deletar agora.
+        await db.rpc("memory_delete_summarize_queue_item", { p_msg_id: row.msg_id });
+        descartadas++;
+        continue;
+      }
+      falhas++;
+      // Erro transitório (rede/DB): não deleta, mensagem reaparece após o vt para retry
+      // automático (mesmo raciocínio de tenant-router-worker para erros não-permanentes).
     }
   }
 
-  return Response.json({
-    ok: true,
-    consumidas: rows.length,
-    resumidas,
-    descartadas,
-    aguardandoCapability,
-    falhas,
-  });
+  return Response.json({ ok: true, consumidas: rows.length, resumidas, aguardando_capability, descartadas, falhas });
 });

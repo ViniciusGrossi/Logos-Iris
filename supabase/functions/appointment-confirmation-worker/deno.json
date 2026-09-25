@@ -1,0 +1,23 @@
+{
+  "imports": {
+    "zod": "npm:zod@^4.4.3",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@^2.112.0",
+    "@/": "../../../src/",
+    "@/adapters/whatsapp/types": "../../../src/adapters/whatsapp/types.ts",
+    "@/adapters/whatsapp/evolution.adapter": "../../../src/adapters/whatsapp/evolution.adapter.ts",
+    "@/adapters/whatsapp/openwa.adapter": "../../../src/adapters/whatsapp/openwa.adapter.ts",
+    "@/adapters/whatsapp/cloud-api.adapter": "../../../src/adapters/whatsapp/cloud-api.adapter.ts",
+    "@/repositories/whatsapp-connection.repository": "../../../src/repositories/whatsapp-connection.repository.ts",
+    "@/schemas/whatsapp-gateway.schema": "../../../src/schemas/whatsapp-gateway.schema.ts",
+    "@/lib/whatsapp-gateway/errors": "../../../src/lib/whatsapp-gateway/errors.ts",
+    "@/lib/whatsapp-gateway/http-retry": "../../../src/lib/whatsapp-gateway/http-retry.ts",
+    "@/lib/evolution.client": "../../../src/lib/evolution.client.ts",
+    "@/lib/evolution.errors": "../../../src/lib/evolution.errors.ts",
+    "@/lib/openwa.client": "../../../src/lib/openwa.client.ts",
+    "@/lib/openwa.errors": "../../../src/lib/openwa.errors.ts",
+    "@/lib/cloud-api.client": "../../../src/lib/cloud-api.client.ts",
+    "@/lib/cloud-api.errors": "../../../src/lib/cloud-api.errors.ts",
+    "@/lib/supabase/service-client": "../../../src/lib/supabase/service-client.ts",
+    "@/lib/supabase/database.types": "../../../src/lib/supabase/database.types.ts"
+  }
+}
