@@ -18,9 +18,9 @@ const mockUseDashboard = useDashboard as ReturnType<typeof vi.fn>;
 function mockState(state: string, overrides: Record<string, unknown> = {}) {
   mockUseDashboard.mockReturnValue({
     state,
-    setState: vi.fn(),
-    signals: [],
-    totals: { conversas: 0, orcamentos: 0, agendamentos: 0, foraDoCatalogo: 0 },
+    retry: vi.fn(),
+    leadsQuentes: [],
+    totals: { conversas: 0, orcamentos: 0, agendamentos: 0 },
     errorMessage: "Erro simulado",
     ...overrides,
   });
@@ -52,15 +52,19 @@ describe("DashboardPage — 3 estados", () => {
     expect(screen.getByText("Ainda sem sinais hoje.")).toBeDefined();
   });
 
-  it("renderiza métricas e sinais quando state='content'", () => {
+  it("renderiza métricas e leads quentes quando state='content'", () => {
     mockState("content", {
-      totals: { conversas: 23, orcamentos: 4, agendamentos: 2, foraDoCatalogo: 1 },
-      signals: [
-        { id: "s1", type: "orcamento", persona: "vendas", description: "Orçamento gerado", conversationId: "c1", time: "09:42" },
-      ],
+      totals: { conversas: 23, orcamentos: 4, agendamentos: 2 },
+      leadsQuentes: [{ conversation_id: "c1", resumo: "Lead quente via anúncio" }],
     });
     render(<DashboardPage />);
     expect(screen.getByText("23")).toBeDefined();
-    expect(screen.getByText("Orçamento gerado")).toBeDefined();
+    expect(screen.getByText("Lead quente via anúncio")).toBeDefined();
+  });
+
+  it("NÃO renderiza card 'Fora do catálogo' (Requisito 6 — removido, sem campo correspondente no contrato real)", () => {
+    mockState("content", { totals: { conversas: 1, orcamentos: 0, agendamentos: 0 } });
+    render(<DashboardPage />);
+    expect(screen.queryByText("Fora do catálogo")).toBeNull();
   });
 });

@@ -35,13 +35,20 @@ function InboxScreen() {
   const searchParams = useSearchParams();
   const {
     state,
-    setState,
+    retry,
     selectedId,
     setSelectedId,
     selected,
     messages,
     filteredConversations,
     errorMessage,
+    pauseSelected,
+    resumeSelected,
+    showResumeConfirm,
+    confirmResume,
+    cancelResumeConfirm,
+    actionPending,
+    actionError,
   } = useInbox();
 
   // Inicializa selectedId da URL na primeira renderização
@@ -57,7 +64,7 @@ function InboxScreen() {
           title="Erro ao carregar conversas"
           description={errorMessage}
           action={
-            <Button variant="outline" size="sm" onClick={() => setState("content")}>
+            <Button variant="outline" size="sm" onClick={retry}>
               Tentar novamente
             </Button>
           }
@@ -140,10 +147,35 @@ function InboxScreen() {
                   <div className="text-sm font-medium">{selected.contactName}</div>
                   <PersonaBadge persona={selected.persona} className="mt-0.5" />
                 </div>
-                <Button variant="outline" size="sm">
-                  Pausar
+                {/* Requisito 3/4 — pausar/retomar chama os endpoints reais (human-handoff.md);
+                    retomar após pausa longa exige confirmação explícita antes de reativar. */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={actionPending}
+                  onClick={() => void (selected.status === "pausada" ? resumeSelected() : pauseSelected())}
+                >
+                  {selected.status === "pausada" ? "Retomar" : "Pausar"}
                 </Button>
               </div>
+              {actionError && !showResumeConfirm && (
+                <div className="border-b border-border bg-destructive/10 px-4 py-2 text-sm text-destructive">
+                  {actionError}
+                </div>
+              )}
+              {showResumeConfirm && (
+                <div className="flex items-center justify-between gap-3 border-b border-border bg-bg-subtle px-4 py-3 text-sm">
+                  <span>Essa conversa ficou pausada por um tempo. Confirma que a Iris pode voltar a responder?</span>
+                  <div className="flex shrink-0 gap-2">
+                    <Button size="sm" variant="outline" onClick={cancelResumeConfirm} disabled={actionPending}>
+                      Cancelar
+                    </Button>
+                    <Button size="sm" onClick={() => void confirmResume()} disabled={actionPending}>
+                      Confirmar
+                    </Button>
+                  </div>
+                </div>
+              )}
               <div className="flex-1 space-y-3 overflow-y-auto px-4 py-4">
                 {messages.map((m) => (
                   <MessageBubble key={m.id} message={m} />

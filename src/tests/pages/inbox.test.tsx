@@ -18,7 +18,7 @@ const mockUseInbox = useInbox as ReturnType<typeof vi.fn>;
 function mockState(state: string, overrides: Record<string, unknown> = {}) {
   mockUseInbox.mockReturnValue({
     state,
-    setState: vi.fn(),
+    retry: vi.fn(),
     conversations: [],
     selectedId: null,
     setSelectedId: vi.fn(),
@@ -30,6 +30,13 @@ function mockState(state: string, overrides: Record<string, unknown> = {}) {
     setPersonaFilter: vi.fn(),
     filteredConversations: [],
     errorMessage: "Erro simulado",
+    pauseSelected: vi.fn(),
+    resumeSelected: vi.fn(),
+    showResumeConfirm: false,
+    confirmResume: vi.fn(),
+    cancelResumeConfirm: vi.fn(),
+    actionPending: false,
+    actionError: null,
     ...overrides,
   });
 }
@@ -78,5 +85,75 @@ describe("InboxPage — 3 estados", () => {
     render(<InboxPage />);
     expect(screen.getByText("Marcelo Andrade")).toBeDefined();
     expect(screen.getByText("Fecho o pacote então")).toBeDefined();
+  });
+
+  it("Requisito 3: mostra botão 'Pausar' pra conversa ativa selecionada", () => {
+    const conv = {
+      id: "c1",
+      contactName: "Marcelo Andrade",
+      contactInitial: "M",
+      lastMessagePreview: "Fecho o pacote então",
+      lastMessageAt: "09:42",
+      persona: "vendas",
+      status: "ativa",
+      unread: false,
+    };
+    mockState("content", { selected: conv, selectedId: "c1", filteredConversations: [conv] });
+    render(<InboxPage />);
+    expect(screen.getByRole("button", { name: /pausar/i })).toBeDefined();
+  });
+
+  it("Requisito 3: mostra botão 'Retomar' pra conversa pausada selecionada", () => {
+    const conv = {
+      id: "c1",
+      contactName: "Marcelo Andrade",
+      contactInitial: "M",
+      lastMessagePreview: "Fecho o pacote então",
+      lastMessageAt: "09:42",
+      persona: "vendas",
+      status: "pausada",
+      unread: false,
+    };
+    mockState("content", { selected: conv, selectedId: "c1", filteredConversations: [conv] });
+    render(<InboxPage />);
+    expect(screen.getByRole("button", { name: /retomar/i })).toBeDefined();
+  });
+
+  it("Requisito 4: exibe diálogo de confirmação quando showResumeConfirm=true (nunca retoma silenciosamente)", () => {
+    const conv = {
+      id: "c1",
+      contactName: "Marcelo Andrade",
+      contactInitial: "M",
+      lastMessagePreview: "Fecho o pacote então",
+      lastMessageAt: "09:42",
+      persona: "vendas",
+      status: "pausada",
+      unread: false,
+    };
+    mockState("content", { selected: conv, selectedId: "c1", filteredConversations: [conv], showResumeConfirm: true });
+    render(<InboxPage />);
+    expect(screen.getByText(/confirma que a Iris pode voltar a responder/i)).toBeDefined();
+    expect(screen.getByRole("button", { name: /confirmar/i })).toBeDefined();
+  });
+
+  it("achado do /code-review: falha de pausar/retomar mostra actionError (nunca some silenciosamente)", () => {
+    const conv = {
+      id: "c1",
+      contactName: "Marcelo Andrade",
+      contactInitial: "M",
+      lastMessagePreview: "Fecho o pacote então",
+      lastMessageAt: "09:42",
+      persona: "vendas",
+      status: "ativa",
+      unread: false,
+    };
+    mockState("content", {
+      selected: conv,
+      selectedId: "c1",
+      filteredConversations: [conv],
+      actionError: "Não foi possível pausar esta conversa. Tente de novo.",
+    });
+    render(<InboxPage />);
+    expect(screen.getByText("Não foi possível pausar esta conversa. Tente de novo.")).toBeDefined();
   });
 });
